@@ -2,6 +2,8 @@ package i2pd
 
 import (
 	"context"
+	"time"
+
 	"github.com/docker/docker/client"
 	"github.com/go-i2p/go-i2p/lib/common/base64"
 	"github.com/go-i2p/go-i2p/lib/common/router_info"
@@ -10,7 +12,7 @@ import (
 
 // GetRouterInfoWithFilename extracts RouterInfo and returns it with the routerInfoString and filename
 func GetRouterInfoWithFilename(cli *client.Client, ctx context.Context, containerID string) (*router_info.RouterInfo, string, string, error) {
-	routerInfoString, err := docker_control.ReadFileFromContainer(cli, ctx, containerID, "/root/.i2pd/router.info")
+	routerInfoString, err := docker_control.ReadFileFromContainer(cli, ctx, containerID, I2PDDataDir+"/router.info")
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -24,9 +26,25 @@ func GetRouterInfoWithFilename(cli *client.Client, ctx context.Context, containe
 	return &ri, routerInfoString, filename, nil
 }
 
-// GetRouterInfoWithFilename extracts RouterInfo and returns it with the routerInfoString and filename
+// GetRouterInfoWithFilenameRaw extracts RouterInfo and returns the raw routerInfoString,
+// the netDb filename and the netDb subdirectory. i2pd only writes router.info a few
+// seconds after startup, so extraction is retried for a while before giving up.
 func GetRouterInfoWithFilenameRaw(cli *client.Client, ctx context.Context, containerID string) (string, string, string, error) {
-	routerInfoString, err := docker_control.ReadFileFromContainerUnarchive(cli, ctx, containerID, "/root/.i2pd/router.info")
+	var routerInfoString string
+	var err error
+	for attempt := 0; attempt < 15; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+		}
+		routerInfoString, err = docker_control.ReadFileFromContainerUnarchive(cli, ctx, containerID, I2PDDataDir+"/router.info")
+		if err == nil {
+			break
+		}
+		log.WithFields(map[string]interface{}{
+			"containerID": containerID,
+			"attempt":     attempt + 1,
+		}).Debug("router.info not available yet, retrying")
+	}
 	if err != nil {
 		return "", "", "", err
 	}
