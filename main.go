@@ -13,23 +13,36 @@ import (
 	"go-i2p-testnet/lib/docker_control"
 	goi2pnode "go-i2p-testnet/lib/go-i2p"
 	"go-i2p-testnet/lib/i2pd"
+	"go-i2p-testnet/lib/monitor"
 	"go-i2p-testnet/lib/utils/logger"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 )
 
+// Router describes a router node participating in the testnet.
+type Router struct {
+	ID          int
+	Type        string // "i2pd" | "goi2p"
+	Name        string // container name, e.g. "router-i2pd-1"
+	ContainerID string
+	VolumeName  string
+	IP          string
+}
+
 var (
 	running = false
-	// Track created containers and volumes for cleanup
-	createdRouters    []string
+	// Track created routers, containers and volumes for cleanup
+	routers           []Router
 	createdContainers []string
 	createdVolumes    []string
 	sharedVolumeName  string
 	mu                sync.Mutex // To protect access to the slices
 	log               = logger.GetTestnetLogger()
+	logMgr            *monitor.LogManager
 )
 
 var completer = readline.NewPrefixCompleter(
@@ -45,8 +58,20 @@ var completer = readline.NewPrefixCompleter(
 		readline.PcItem("goi2p_router"),
 		readline.PcItem("i2pd_router"),
 	),
-	readline.PcItem("sync_i2pd_shared"),
-	readline.PcItem("sync_i2pd_netdb"),
+	readline.PcItem("sync"),
+	readline.PcItem("sync_shared"),
+	readline.PcItem("sync_netdb"),
+	readline.PcItem("verify_netdb"),
+	readline.PcItem("peers"),
+	readline.PcItem("logs",
+		readline.PcItem("all"),
+		readline.PcItemDynamic(func(string) []string {
+			if logMgr == nil {
+				return nil
+			}
+			return logMgr.Names()
+		}),
+	),
 	readline.PcItem("exit"),
 )
 
@@ -112,16 +137,17 @@ func cleanup(cli *client.Client, ctx context.Context, createdContainers []string
 	}
 }
 
-func addCreated(containerID, volumeID string) {
-	//mu.Lock() //For some reason, this freezes
-	//defer mu.Unlock()
+// addCreated is the single tracking point for new routers.
+// Callers must hold mu.
+func addCreated(r Router) {
 	log.WithFields(map[string]interface{}{
-		"containerID": containerID,
-		"volumeID":    volumeID,
-	}).Debug("Tracking new container and volume")
-	createdContainers = append(createdContainers, containerID)
-	createdVolumes = append(createdVolumes, volumeID)
-	return
+		"name":        r.Name,
+		"containerID": r.ContainerID,
+		"volumeID":    r.VolumeName,
+	}).Debug("Tracking new router")
+	routers = append(routers, r)
+	createdContainers = append(createdContainers, r.ContainerID)
+	createdVolumes = append(createdVolumes, r.VolumeName)
 }
 
 func start(cli *client.Client, ctx context.Context) {
@@ -251,7 +277,7 @@ func usage(cli *client.Client, ctx context.Context) {
 func addGOI2PRouter(cli *client.Client, ctx context.Context) error {
 	mu.Lock()
 	defer mu.Unlock()
-	routerID := len(createdRouters) + 1
+	routerID := len(routers) + 1
 
 	log.WithField("routerID", routerID).Debug("Adding new go-i2p router")
 
@@ -278,24 +304,27 @@ func addGOI2PRouter(cli *client.Client, ctx context.Context) error {
 		return err
 	}
 
-	log.WithFields(map[string]interface{}{
-		"routerID":    routerID,
-		"containerID": containerID,
-		"volumeID":    volumeID,
-		"ip":          nextIP,
-	}).Debug("Adding router to tracking lists")
-	createdRouters = append(createdRouters, containerID)
-	createdContainers = append(createdContainers, containerID)
-	createdVolumes = append(createdVolumes, volumeID)
+	name := fmt.Sprintf("router-goi2p-%d", routerID)
+	addCreated(Router{
+		ID:          routerID,
+		Type:        "goi2p",
+		Name:        name,
+		ContainerID: containerID,
+		VolumeName:  volumeID,
+		IP:          nextIP,
+	})
 
-	addCreated(containerID, volumeID)
+	if err := logMgr.StartCapture(ctx, containerID, name); err != nil {
+		log.WithError(err).Error("Failed to start log capture")
+		fmt.Printf("Warning: log capture for %s unavailable: %v\n", name, err)
+	}
 	return nil
 }
 
 func addI2PDRouter(cli *client.Client, ctx context.Context) error {
 	mu.Lock()
 	defer mu.Unlock()
-	routerID := len(createdRouters) + 1
+	routerID := len(routers) + 1
 
 	log.WithField("routerID", routerID).Debug("Adding new i2pd router")
 
@@ -313,7 +342,7 @@ func addI2PDRouter(cli *client.Client, ctx context.Context) error {
 	}).Debug("Generating router configuration")
 
 	// Generate the configuration data
-	configData, err := i2pd.GenerateRouterConfig(routerID)
+	configData, err := i2pd.GenerateRouterConfig(routerID, nextIP)
 	if err != nil {
 		log.WithError(err).Error("Failed to generate i2pd router config")
 		return err
@@ -350,21 +379,258 @@ func addI2PDRouter(cli *client.Client, ctx context.Context) error {
 		return err
 	}
 
-	log.WithFields(map[string]interface{}{
-		"routerID":    routerID,
-		"containerID": containerID,
-		"volumeID":    volumeName,
-		"ip":          nextIP,
-	}).Debug("Adding router to tracking lists")
+	name := fmt.Sprintf("router-i2pd-%d", routerID)
+	addCreated(Router{
+		ID:          routerID,
+		Type:        "i2pd",
+		Name:        name,
+		ContainerID: containerID,
+		VolumeName:  volumeName,
+		IP:          nextIP,
+	})
 
-	// Update tracking lists
-	createdRouters = append(createdRouters, containerID)
-	createdContainers = append(createdContainers, containerID)
-	createdVolumes = append(createdVolumes, volumeName)
-
-	// Add to any additional tracking structures if necessary
-	addCreated(containerID, volumeName)
+	if err := logMgr.StartCapture(ctx, containerID, name); err != nil {
+		log.WithError(err).Error("Failed to start log capture")
+		fmt.Printf("Warning: log capture for %s unavailable: %v\n", name, err)
+	}
 	return nil
+}
+
+// syncShared publishes every router's netDb knowledge to the shared volume.
+func syncShared(cli *client.Client, ctx context.Context) {
+	log.Debug("Syncing netDb from all routers to the shared volume")
+	for _, r := range routers {
+		var err error
+		switch r.Type {
+		case "i2pd":
+			err = i2pd.SyncNetDbToShared(cli, ctx, r.ContainerID, sharedVolumeName)
+		case "goi2p":
+			err = goi2pnode.SyncNetDbToShared(cli, ctx, r.ContainerID)
+		}
+		if err != nil {
+			fmt.Printf("Failed to sync netDb from %s to shared volume: %v\n", r.Name, err)
+		} else {
+			fmt.Printf("Successfully synced netDb from %s to shared volume\n", r.Name)
+		}
+	}
+}
+
+// syncNetDb distributes the shared netDb to every router, then syncs each
+// i2pd router's RouterInfo back into the shared netDb and re-distributes it
+// inside the container (two-pass, matching the original sync semantics).
+func syncNetDb(cli *client.Client, ctx context.Context) {
+	log.Debug("Syncing netDb from shared volume to all routers")
+	for _, r := range routers {
+		var err error
+		switch r.Type {
+		case "i2pd":
+			err = i2pd.SyncSharedToNetDb(cli, ctx, r.ContainerID, sharedVolumeName)
+		case "goi2p":
+			err = goi2pnode.SyncSharedToNetDb(cli, ctx, r.ContainerID)
+		}
+		if err != nil {
+			fmt.Printf("Failed to sync netDb to %s: %v\n", r.Name, err)
+		} else {
+			fmt.Printf("Successfully synced netDb to %s from shared volume\n", r.Name)
+		}
+	}
+
+	log.Debug("Syncing RouterInfo from each i2pd router to the shared netDb")
+	for _, r := range routers {
+		if r.Type != "i2pd" {
+			continue
+		}
+		err := i2pd.SyncRouterInfoToNetDb(cli, ctx, r.ContainerID, sharedVolumeName)
+		if err != nil {
+			fmt.Printf("Failed to sync RouterInfo from %s to shared netDb: %v\n", r.Name, err)
+		} else {
+			fmt.Printf("Successfully synced RouterInfo from %s to shared netDb\n", r.Name)
+		}
+	}
+
+	// i2pd only reads its netDb from disk at startup, so restart the i2pd
+	// routers to make them load the freshly synced RouterInfos. (go-i2p
+	// re-reads its netDb on demand and needs no restart.)
+	for _, r := range routers {
+		if r.Type != "i2pd" {
+			continue
+		}
+		timeout := 10 // seconds
+		err := cli.ContainerRestart(ctx, r.ContainerID, container.StopOptions{Timeout: &timeout})
+		if err != nil {
+			fmt.Printf("Failed to restart %s to load synced netDb: %v\n", r.Name, err)
+		} else {
+			fmt.Printf("Restarted %s to load synced netDb\n", r.Name)
+		}
+	}
+}
+
+// i2pd transports page session lines look like (after HTML tag stripping):
+//   qGsu: 172.28.0.3:4567 &#8658;  [411894:465166]
+// ident, peer endpoint, then [sent:received] bytes.
+var i2pdSessionRe = regexp.MustCompile(`([A-Za-z0-9~-]{4}):\s+(\d+\.\d+\.\d+\.\d+):(\d+)\s+\S*\s*\[(\d+):(\d+)\]`)
+
+// showPeers reports transport-level connectivity: i2pd's own NTCP2/SSU2
+// session table (covers UDP), established TCP sessions, and interface byte
+// counters — the ground truth for "are the routers actually talking".
+func showPeers(cli *client.Client, ctx context.Context) {
+	if len(routers) == 0 {
+		fmt.Println("No routers running")
+		return
+	}
+
+	ipToName := make(map[string]string, len(routers))
+	for _, r := range routers {
+		ipToName[r.IP] = r.Name
+	}
+
+	for _, r := range routers {
+		counters, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
+			"echo $(cat /sys/class/net/eth0/statistics/rx_bytes) $(cat /sys/class/net/eth0/statistics/tx_bytes)"})
+		rxTx := strings.Fields(strings.TrimSpace(counters))
+		traffic := ""
+		if err == nil && len(rxTx) == 2 {
+			traffic = fmt.Sprintf("rx=%s bytes, tx=%s bytes", rxTx[0], rxTx[1])
+		}
+		fmt.Printf("\n%s (%s) %s\n", r.Name, r.IP, traffic)
+
+		found := false
+
+		// i2pd reports its transport sessions (including UDP-based SSU2)
+		// on the webconsole transports page.
+		if r.Type == "i2pd" {
+			out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
+				`wget -qO- "http://127.0.0.1:7070/?page=transports" 2>/dev/null | sed 's/<[^>]*>/ /g'`})
+			if err == nil {
+				transport := "?"
+				for _, line := range strings.Split(out, "\n") {
+					if strings.Contains(line, "NTCP") {
+						transport = "NTCP2"
+					} else if strings.Contains(line, "SSU") {
+						transport = "SSU2"
+					}
+					if match := i2pdSessionRe.FindStringSubmatch(line); match != nil {
+						peer := ipToName[match[2]]
+						if peer == "" {
+							peer = match[2]
+						}
+						fmt.Printf("  %s session -> %s (%s:%s) sent=%s recv=%s bytes\n",
+							transport, peer, match[2], match[3], match[4], match[5])
+						found = true
+					}
+				}
+			}
+		}
+
+		// TCP view (catches NTCP2 and anything go-i2p establishes)
+		out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
+			"netstat -tn 2>/dev/null | grep ESTABLISHED | grep 172.28. || true"})
+		if err != nil {
+			fmt.Printf("  error inspecting connections: %v\n", err)
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				continue
+			}
+			remoteIP, _, _ := strings.Cut(fields[4], ":")
+			peer := ipToName[remoteIP]
+			if peer == "" {
+				peer = remoteIP
+			}
+			fmt.Printf("  ESTABLISHED TCP %s -> %s (%s)\n", fields[3], peer, fields[4])
+			found = true
+		}
+		if !found {
+			fmt.Println("  no active transport sessions")
+		}
+	}
+	fmt.Println("\nNote: SSU2 sessions (UDP) come from i2pd's webconsole; go-i2p sessions only appear in the TCP view.")
+}
+
+// verifyNetDb reports how many RouterInfos each router has in its netDb,
+// plus the shared volume total.
+func verifyNetDb(cli *client.Client, ctx context.Context) {
+	if len(routers) == 0 {
+		fmt.Println("No routers running")
+		return
+	}
+
+	// Only i2pd routers publish a RouterInfo right now, so that's the ceiling
+	expected := 0
+	for _, r := range routers {
+		if r.Type == "i2pd" {
+			expected++
+		}
+	}
+
+	fmt.Printf("\n%-20s %-8s %-15s %-10s\n", "NAME", "TYPE", "NETDB RI COUNT", "EXPECTED")
+	fmt.Println(strings.Repeat("-", 60))
+	for _, r := range routers {
+		var netDbDir string
+		switch r.Type {
+		case "i2pd":
+			netDbDir = i2pd.I2PDDataDir + "/netDb"
+		case "goi2p":
+			netDbDir = goi2pnode.GoI2PNetDbDir
+		}
+		countCmd := []string{"sh", "-c",
+			fmt.Sprintf("find %s -name 'routerInfo-*.dat' 2>/dev/null | wc -l", netDbDir)}
+		out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, countCmd)
+		if err != nil {
+			fmt.Printf("%-20s %-8s error: %v\n", r.Name, r.Type, err)
+			continue
+		}
+		fmt.Printf("%-20s %-8s %-15s %-10d\n", r.Name, r.Type, strings.TrimSpace(out), expected)
+	}
+
+	sharedCmd := []string{"sh", "-c", "find /shared/netDb -name 'routerInfo-*.dat' 2>/dev/null | wc -l"}
+	out, err := docker_control.ExecInContainer(cli, ctx, routers[0].ContainerID, sharedCmd)
+	if err != nil {
+		fmt.Printf("Failed to count shared netDb RouterInfos: %v\n", err)
+		return
+	}
+	fmt.Printf("\nShared volume RouterInfos: %s\n", strings.TrimSpace(out))
+}
+
+// streamLogs streams captured router logs to the terminal until the user
+// presses Enter. target is a router name or "all".
+func streamLogs(rl *readline.Instance, target string) {
+	var (
+		ch    <-chan string
+		unsub func()
+		err   error
+	)
+	if target == "all" {
+		ch, unsub = logMgr.SubscribeAll()
+	} else {
+		ch, unsub, err = logMgr.Subscribe(target)
+		if err != nil {
+			fmt.Println(err)
+			names := logMgr.Names()
+			if len(names) > 0 {
+				fmt.Printf("Available routers: %s\n", strings.Join(names, ", "))
+			}
+			return
+		}
+	}
+	defer unsub()
+
+	fmt.Println("--- streaming logs, press Enter to stop ---")
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case line := <-ch:
+				fmt.Println(line)
+			case <-done:
+				return
+			}
+		}
+	}()
+	rl.Readline()
+	close(done)
 }
 
 func main() {
@@ -377,10 +643,14 @@ func main() {
 		log.WithError(err).Fatal("Failed to create Docker client")
 	}
 
+	// Capture router logs to per-router files under ./logs
+	logMgr = monitor.NewLogManager(cli, "logs")
+
 	// Ensure cleanup is performed on exit
 	defer func() {
 		if running {
 			log.Debug("Performing cleanup on exit")
+			logMgr.StopAll()
 			cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
 		}
 	}()
@@ -430,8 +700,16 @@ func main() {
 			}
 		case "stop":
 			if running {
+				logMgr.StopAll()
 				cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
 				running = false
+				// Reset tracking so a subsequent start doesn't re-clean stale IDs
+				mu.Lock()
+				routers = nil
+				createdContainers = nil
+				createdVolumes = nil
+				sharedVolumeName = ""
+				mu.Unlock()
 			} else {
 				fmt.Println("Testnet isn't running")
 			}
@@ -497,63 +775,47 @@ func main() {
 			default:
 				fmt.Println("Unknown router type. Available types: goi2p_router, i2pd_router")
 			}
-		case "sync_i2pd_shared":
+		case "sync_shared":
 			if !running {
 				fmt.Println("Testnet isn't running")
 			} else {
-				log.Debug("Syncing netDb from all router containers to the shared volume")
-
-				// Iterate through all created router containers
-				for _, containerID := range createdContainers {
-					log.WithField("containerID", containerID).Debug("Syncing netDb for container")
-
-					// Sync the netDb directory to the shared volume
-					err := i2pd.SyncNetDbToShared(cli, ctx, containerID, sharedVolumeName) // Pass sharedVolumeName
-					if err != nil {
-						fmt.Printf("Failed to sync netDb from container %s: %v\n", containerID, err)
-					} else {
-						fmt.Printf("Successfully synced netDb from container %s to shared volume\n", containerID)
-					}
-				}
+				syncShared(cli, ctx)
 			}
-		case "sync_i2pd_netdb":
+		case "sync_netdb":
 			if !running {
 				fmt.Println("Testnet isn't running")
 			} else {
-				log.Debug("Syncing netDb from shared volume to all router containers")
-
-				// Sync from shared volume to all router containers
-				for _, containerID := range createdContainers {
-					log.WithField("containerID", containerID).Debug("Syncing netDb from shared volume to container")
-
-					// Sync the shared netDb to the container
-					err := i2pd.SyncSharedToNetDb(cli, ctx, containerID, sharedVolumeName)
-					if err != nil {
-						fmt.Printf("Failed to sync netDb to container %s: %v\n", containerID, err)
-						continue
-					} else {
-						fmt.Printf("Successfully synced netDb to container %s from shared volume\n", containerID)
-					}
-				}
-
-				// Sync each container's RouterInfo back to the shared netDb
-				log.Debug("Syncing RouterInfo from each container to the shared netDb")
-				for _, containerID := range createdContainers {
-					log.WithField("containerID", containerID).Debug("Syncing RouterInfo from container to shared netDb")
-
-					// Sync the RouterInfo from the container to the shared netDb
-					err := i2pd.SyncRouterInfoToNetDb(cli, ctx, containerID, sharedVolumeName)
-					if err != nil {
-						fmt.Printf("Failed to sync RouterInfo from container %s to shared netDb: %v\n", containerID, err)
-					} else {
-						fmt.Printf("Successfully synced RouterInfo from container %s to shared netDb\n", containerID)
-					}
-				}
+				syncNetDb(cli, ctx)
 			}
-
+		case "sync":
+			if !running {
+				fmt.Println("Testnet isn't running")
+			} else {
+				syncShared(cli, ctx)
+				syncNetDb(cli, ctx)
+			}
+		case "verify_netdb":
+			if !running {
+				fmt.Println("Testnet isn't running")
+			} else {
+				verifyNetDb(cli, ctx)
+			}
+		case "peers":
+			if !running {
+				fmt.Println("Testnet isn't running")
+			} else {
+				showPeers(cli, ctx)
+			}
+		case "logs":
+			if len(parts) < 2 {
+				fmt.Println("Usage: logs [all|<router-name>] (router names autocomplete)")
+				continue
+			}
+			streamLogs(rl, parts[1])
 		case "exit":
 			fmt.Println("Exiting...")
 			if running {
+				logMgr.StopAll()
 				cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
 			}
 			return
@@ -638,7 +900,13 @@ func showHelp() {
 	fmt.Println("  build						- Build docker images for nodes")
 	fmt.Println("  rebuild					- Rebuild docker images for nodes")
 	fmt.Println("  remove_images					- Removes all node images")
-	fmt.Println("  add <nodetype> 				- Available node types are go-i2p and i2pd")
+	fmt.Println("  add <nodetype> 				- Available node types are goi2p_router and i2pd_router")
+	fmt.Println("  sync						- Full netDb sync: publish to shared volume, then distribute")
+	fmt.Println("  sync_shared					- Publish each router's netDb to the shared volume")
+	fmt.Println("  sync_netdb					- Distribute the shared netDb to every router")
+	fmt.Println("  verify_netdb					- Show RouterInfo counts per router and in the shared volume")
+	fmt.Println("  peers						- Show established transport sessions and traffic counters per router")
+	fmt.Println("  logs [all|<router-name>]			- Stream router logs side-by-side (also written to ./logs/*.log)")
 	fmt.Println("  exit						- Exit the CLI")
 }
 

@@ -109,7 +109,7 @@ func SyncNetDbToShared(cli *client.Client, ctx context.Context, containerID stri
 // SyncSharedToNetDb syncs netDb from the shared volume to the router container
 func SyncSharedToNetDb(cli *client.Client, ctx context.Context, containerID string, volumeName string) error {
 	// Define the destination path inside the target container
-	destinationPath := "/root/.i2pd/netDb"
+	destinationPath := I2PDDataDir + "/netDb"
 
 	// Create a temporary helper container with the shared volume mounted
 	helperContainerName := "helper-container"
@@ -179,10 +179,13 @@ func SyncSharedToNetDb(cli *client.Client, ctx context.Context, containerID stri
 	}
 
 	// **Copy the netDb directory to the target container**
+	// The archive from CopyFromContainer is rooted at "netDb/", so extract
+	// into the data dir (the parent), not into netDb itself — extracting at
+	// destinationPath would nest a second netDb directory inside it.
 	copyToContainerOptions := types.CopyToContainerOptions{
 		AllowOverwriteDirWithFile: true,
 	}
-	err = cli.CopyToContainer(ctx, containerID, destinationPath, reader, copyToContainerOptions)
+	err = cli.CopyToContainer(ctx, containerID, I2PDDataDir, reader, copyToContainerOptions)
 	if err != nil {
 		return fmt.Errorf("error copying to target container: %v", err)
 	}
@@ -278,7 +281,7 @@ func SyncRouterInfoToNetDb(cli *client.Client, ctx context.Context, containerID 
 	// Now rsync
 	fmt.Printf("Beginning rsync\n")
 
-	rsyncCmd := []string{"rsync", "-avzP", "/shared/netDb/", "/root/.i2pd/netDb/"}
+	rsyncCmd := []string{"rsync", "-avzP", "/shared/netDb/", I2PDDataDir + "/netDb/"}
 	execOptions := container.ExecOptions{
 		Cmd:          rsyncCmd,
 		AttachStdout: true,

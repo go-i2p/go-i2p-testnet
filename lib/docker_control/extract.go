@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"github.com/docker/docker/client"
 	"io"
+	"path/filepath"
 )
-
-/// /root/.i2pd/router.info
 
 // ReadFileFromContainer reads a file from inside a container and returns its contents
 func ReadFileFromContainer(cli *client.Client, ctx context.Context, containerID string, filePath string) (string, error) {
@@ -65,7 +64,7 @@ func ReadFileFromContainerUnarchive(cli *client.Client, ctx context.Context, con
 		log.Printf("Found file in tar: %s\n", header.Name)
 
 		// Check if the current file matches the requested file
-		if header.Typeflag == tar.TypeReg && header.Name == "router.info" { // Use the relative name
+		if header.Typeflag == tar.TypeReg && header.Name == filepath.Base(filePath) { // Use the relative name
 			if _, err := io.Copy(&fileContent, tarReader); err != nil {
 				return "", fmt.Errorf("error extracting file content: %v", err)
 			}

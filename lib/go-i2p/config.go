@@ -5,76 +5,11 @@ import (
 	"fmt"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"github.com/go-i2p/go-i2p/lib/config"
 	"go-i2p-testnet/lib/utils"
 	"go-i2p-testnet/lib/utils/logger"
-	"gopkg.in/yaml.v3"
-	"os"
-	"path/filepath"
 )
 
 var log = logger.GetTestnetLogger()
-
-// initializeRouterConfig sets up a router-specific configuration for each instance
-func initializeRouterConfig(routerID int) *config.RouterConfig {
-	log.WithField("routerID", routerID).Debug("Initializing router configuration")
-	// Define base directory for this router's configuration
-	baseDir := filepath.Join("testnet", fmt.Sprintf("router%d", routerID))
-	err := os.MkdirAll(baseDir, os.ModePerm)
-	if err != nil {
-		log.WithFields(map[string]interface{}{
-			"routerID": routerID,
-			"baseDir":  baseDir,
-			"error":    err,
-		}).Error("Failed to create base directory")
-		return nil
-	}
-
-	// Assign each router its own netDb and working directory
-	netDbPath := filepath.Join(baseDir, "netDb")
-	workingDir := filepath.Join(baseDir, "config")
-
-	log.WithFields(map[string]interface{}{
-		"routerID":   routerID,
-		"netDbPath":  netDbPath,
-		"workingDir": workingDir,
-	}).Debug("Creating router directories")
-
-	err = os.MkdirAll(netDbPath, os.ModePerm)
-	if err != nil {
-		log.WithFields(map[string]interface{}{
-			"routerID":  routerID,
-			"netDbPath": netDbPath,
-			"error":     err,
-		}).Error("Failed to create netDb directory")
-		return nil
-	}
-	err = os.MkdirAll(workingDir, os.ModePerm)
-	if err != nil {
-		log.WithFields(map[string]interface{}{
-			"routerID":   routerID,
-			"workingDir": workingDir,
-			"error":      err,
-		}).Error("Failed to create working directory")
-		return nil
-	}
-
-	log.WithFields(map[string]interface{}{
-		"routerID":   routerID,
-		"baseDir":    baseDir,
-		"workingDir": workingDir,
-		"netDbPath":  netDbPath,
-	}).Debug("Router configuration initialized successfully")
-
-	// Create and return a RouterConfig instance
-	return &config.RouterConfig{
-		BaseDir:    baseDir,
-		WorkingDir: workingDir,
-		NetDb:      &config.NetDbConfig{Path: netDbPath},
-		Bootstrap:  &config.DefaultBootstrapConfig, // Modify as needed for custom bootstrap setup
-	}
-
-}
 
 func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName string, configData string) error {
 	log.WithField("volumeName", volumeName).Debug("Starting config copy to volume")
@@ -119,7 +54,9 @@ func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName stri
 	}
 
 	log.Debug("Creating tar archive of config data")
-	tarReader, err := utils.CreateTarArchive(".go-i2p/config.yaml", configData) // Now... is this created before or after?
+	// The volume is later mounted at /root in the router container, so this
+	// lands at /root/.go-i2p/config.yaml where go-i2p looks by default.
+	tarReader, err := utils.CreateTarArchive(".go-i2p/config.yaml", configData)
 	if err != nil {
 		log.WithError(err).Error("Failed to create tar archive")
 		return fmt.Errorf("error creating tar archive: %v", err)
@@ -142,24 +79,21 @@ func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName stri
 	log.Debug("Successfully copied config to volume")
 	return nil
 }
+
+// GenerateRouterConfig produces the config.yaml for a go-i2p testnet node.
+// The testnet network is internal-only, so the router must bootstrap from its
+// local netDb (populated via the sync commands) instead of clearnet reseed
+// servers. All paths use the binary's defaults under /root/.go-i2p, which
+// live on the per-router volume mounted at /root.
 func GenerateRouterConfig(routerID int) string {
-	log.WithField("routerID", routerID).Debug("Starting router config generation")
-	// Initialize router-specific configuration
-	routerConfig := initializeRouterConfig(routerID)
-	if routerConfig == nil {
-		log.WithField("routerID", routerID).Error("Failed to initialize router config")
-	}
-	// Define common settings for each router instance
-	log.Debug("Marshaling router configuration to YAML")
-	configDataYAML, err := yaml.Marshal(routerConfig)
-	if err != nil {
-		log.WithError(err).Error("Failed to marshal router configuration")
-		panic(err)
-	}
-	configDataYAMLstr := string(configDataYAML)
-	log.WithFields(map[string]interface{}{
-		"routerID": routerID,
-		"config":   configDataYAMLstr,
-	}).Debug("Router configuration generated successfully")
-	return configDataYAMLstr
+	log.WithField("routerID", routerID).Debug("Generating go-i2p router config")
+	return `# go-i2p testnet node: bootstrap only from the local netDb,
+# never from clearnet reseed servers (the network is internal-only).
+bootstrap:
+  type: local
+  low-peer-threshold: 1
+netdb:
+  # peers run netid 5; strict validation would reject their RouterInfos
+  strict-routerinfo-network-validation: false
+`
 }
