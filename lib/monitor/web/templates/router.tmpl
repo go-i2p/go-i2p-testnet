@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="5">
+<title>{{.Name}} — testnet dashboard</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 1.5rem; background:#101418; color:#d8dee4; }
+h1 { font-size: 1.2rem; }
+.kv { display:grid; grid-template-columns: 14rem 1fr; gap:.2rem .8rem; margin:1rem 0; }
+.kv dt { color:#8b949e; } .kv dd { margin:0; }
+table { border-collapse: collapse; margin-top:1rem; }
+th, td { padding:.3rem .6rem; border-bottom:1px solid #2d333b; text-align:left; font-size:.85rem; white-space:nowrap; }
+th { color:#8b949e; }
+.ok { color:#3fb950; } .down { color:#f85149; } .stale { color:#d29922; } .pending { color:#8b949e; }
+.err { color:#f85149; }
+a { color:#58a6ff; text-decoration:none; }
+</style>
+</head>
+<body>
+<p><a href="/">← all routers</a></p>
+<h1>{{.Name}} <span class="{{.StateClass}}">[{{.State}}]</span></h1>
+<dl class="kv">
+  <dt>Implementation</dt><dd>{{.Impl}}</dd>
+  <dt>I2PControl URL</dt><dd>{{.URL}}</dd>
+  <dt>Last seen</dt><dd>{{.LastSeen}}</dd>
+  {{if .LastError}}<dt>Last error</dt><dd class="err">{{.LastError}}</dd>{{end}}
+  <dt>Version</dt><dd>{{.Version}}</dd>
+  <dt>Status</dt><dd>{{.Status}}</dd>
+  <dt>Net status</dt><dd>{{.NetStatusName}}</dd>
+  <dt>Uptime</dt><dd>{{.Uptime}}</dd>
+  <dt>Tunnels inbound</dt><dd>{{.TunIn}}</dd>
+  <dt>Tunnels outbound</dt><dd>{{.TunOut}}</dd>
+  <dt>Tunnels participating</dt><dd>{{.TunPart}}</dd>
+  <dt>Known peers</dt><dd>{{.KnownPeers}}</dd>
+  <dt>Active peers</dt><dd>{{.ActivePeers}}</dd>
+  <dt>Fast peers</dt><dd>{{.FastPeers}}</dd>
+  <dt>High-capacity peers</dt><dd>{{.HighCapPeers}}</dd>
+  <dt>BW in 1s / 15s</dt><dd>{{.BWIn1s}} / {{.BWIn15s}}</dd>
+  <dt>BW out 1s / 15s</dt><dd>{{.BWOut1s}} / {{.BWOut15s}}</dd>
+</dl>
+<h2>Last {{len .History}} samples (newest first)</h2>
+<table>
+  <thead><tr><th>Time</th><th>Uptime</th><th>Tun in/out/part</th><th>Peers known/active</th><th>BW in/out 1s</th></tr></thead>
+  <tbody>
+  {{range .History}}
+    <tr>
+      <td>{{.Time}}</td>
+      <td>{{.Uptime}}</td>
+      <td>{{.TunIn}}/{{.TunOut}}/{{.TunPart}}</td>
+      <td>{{.KnownPeers}}/{{.ActivePeers}}</td>
+      <td>{{.BWIn1s}} / {{.BWOut1s}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5">no samples yet</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</body>
+</html>

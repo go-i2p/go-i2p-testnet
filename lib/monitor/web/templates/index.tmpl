@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{{.RefreshSecs}}">
+<title>go-i2p testnet dashboard</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 1.5rem; background:#101418; color:#d8dee4; }
+h1 { font-size: 1.3rem; }
+.totals { display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
+.totals div { padding:.4rem .8rem; border-radius:.4rem; background:#1b2129; }
+.totals .up b { color:#3fb950; } .totals .down b { color:#f85149; }
+.totals .stale b { color:#d29922; } .totals .pending b { color:#8b949e; }
+table { border-collapse: collapse; width:100%; }
+th, td { padding:.35rem .6rem; border-bottom:1px solid #2d333b; text-align:left; font-size:.9rem; white-space:nowrap; }
+th { color:#8b949e; font-weight:600; }
+tr.ok td.state { color:#3fb950; } tr.down td.state { color:#f85149; }
+tr.stale td.state { color:#d29922; } tr.pending td.state { color:#8b949e; }
+.err { color:#f85149; font-size:.8rem; }
+a { color:#58a6ff; text-decoration:none; }
+footer { margin-top:1rem; color:#8b949e; font-size:.8rem; }
+</style>
+</head>
+<body>
+<h1>go-i2p testnet dashboard</h1>
+<div class="totals">
+  <div>Routers: <b>{{.Total}}</b></div>
+  <div class="up">Up: <b>{{.Up}}</b></div>
+  <div class="down">Down: <b>{{.Down}}</b></div>
+  <div class="stale">Stale: <b>{{.Stale}}</b></div>
+  <div class="pending">Pending: <b>{{.Pending}}</b></div>
+</div>
+<table>
+  <thead><tr>
+    <th>Router</th><th>Impl</th><th>State</th><th>Version</th>
+    <th>Net status</th><th>Uptime</th><th>Tunnels in/out/part</th>
+    <th>Peers known/active</th><th>BW in/out (1s)</th><th>Last seen</th>
+  </tr></thead>
+  <tbody>
+  {{range .Routers}}
+    <tr class="{{.StateClass}}">
+      <td><a href="/router/{{.Name}}">{{.Name}}</a></td>
+      <td>{{.Impl}}</td>
+      <td class="state">{{.State}}</td>
+      <td>{{.Version}}</td>
+      <td>{{.NetStatusName}}</td>
+      <td>{{.Uptime}}</td>
+      <td>{{.TunIn}}/{{.TunOut}}/{{.TunPart}}</td>
+      <td>{{.KnownPeers}}/{{.ActivePeers}}</td>
+      <td>{{.BWIn1s}} / {{.BWOut1s}}</td>
+      <td>{{.LastSeen}}</td>
+    </tr>
+    {{if .LastError}}
+    <tr class="{{.StateClass}}"><td></td><td colspan="9" class="err">{{.LastError}}</td></tr>
+    {{end}}
+  {{else}}
+    <tr><td colspan="10">No routers yet — start the testnet and add routers.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<footer>Auto-refreshes every {{.RefreshSecs}}s. Dashboard up {{.Uptime}}. JSON: <a href="/api/status">/api/status</a></footer>
+</body>
+</html>
