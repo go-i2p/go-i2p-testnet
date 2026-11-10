@@ -7,13 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
+
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"go-i2p-testnet/lib/dockerfiles"
 	"go-i2p-testnet/lib/utils/logger"
-	"io"
-	"strings"
 )
 
 var log = logger.GetTestnetLogger()
@@ -27,7 +28,7 @@ type DockerMessage struct {
 	Error string `json:"error,omitempty"`
 }
 
-func BuildDockerImage(cli *client.Client, ctx context.Context, imageName string, dockerfileName string) error {
+func BuildDockerImage(cli *client.Client, ctx context.Context, imageName, dockerfileName string) error {
 	log.WithFields(map[string]interface{}{
 		"imageName":      imageName,
 		"dockerfileName": dockerfileName,
@@ -62,7 +63,7 @@ func BuildDockerImage(cli *client.Client, ctx context.Context, imageName string,
 	err = tw.WriteHeader(&tar.Header{
 		Name: "Dockerfile",
 		Size: int64(len(dockerfileContent)),
-		Mode: 0600,
+		Mode: 0o600,
 	})
 	if err != nil {
 		tw.Close()
@@ -139,6 +140,7 @@ func RemoveDockerImage(cli *client.Client, ctx context.Context, imageName string
 	}
 	return nil
 }
+
 func imageExists(cli *client.Client, ctx context.Context, imageName string) (bool, error) {
 	log.WithField("imageName", imageName).Debug("Checking if Docker image exists")
 

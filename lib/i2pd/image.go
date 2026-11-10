@@ -3,8 +3,10 @@ package i2pd
 import (
 	"context"
 	"fmt"
-	"github.com/docker/docker/client"
+
 	"go-i2p-testnet/lib/docker_control"
+
+	"github.com/docker/docker/client"
 )
 
 func BuildImage(cli *client.Client, ctx context.Context) error {

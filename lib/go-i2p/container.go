@@ -3,6 +3,7 @@ package go_i2p
 import (
 	"context"
 	"fmt"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
@@ -11,7 +12,7 @@ import (
 )
 
 // createRouterContainer sets up a router container with its configuration.
-func CreateRouterContainer(cli *client.Client, ctx context.Context, routerID int, ip string, networkName string, configData string) (string, string, error) {
+func CreateRouterContainer(cli *client.Client, ctx context.Context, routerID int, ip, networkName, configData string) (string, string, error) {
 	containerName := fmt.Sprintf("router-goi2p-%d", routerID)
 
 	log.WithFields(map[string]interface{}{
@@ -65,7 +66,8 @@ func CreateRouterContainer(cli *client.Client, ctx context.Context, routerID int
 	// and the loop keeps the container alive for exec and log capture.
 	containerConfig := &container.Config{
 		Image: "go-i2p-node",
-		Cmd: []string{"sh", "-c",
+		Cmd: []string{
+			"sh", "-c",
 			"while true; do" +
 				" go-i2p --bootstrap.type local" +
 				" --bootstrap.low-peer-threshold 1" +

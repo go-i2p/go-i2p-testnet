@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/docker/docker/client"
-	"github.com/go-i2p/go-i2p/lib/common/base64"
-	"github.com/go-i2p/go-i2p/lib/common/router_info"
 	"go-i2p-testnet/lib/docker_control"
+
+	"github.com/docker/docker/client"
+	"github.com/go-i2p/common/base64"
+	"github.com/go-i2p/common/router_info"
 )
 
 // GetRouterInfoWithFilename extracts RouterInfo and returns it with the routerInfoString and filename
@@ -20,7 +21,10 @@ func GetRouterInfoWithFilename(cli *client.Client, ctx context.Context, containe
 	if err != nil {
 		return nil, "", "", err
 	}
-	identHash := ri.IdentHash()
+	identHash, err := ri.IdentHash()
+	if err != nil {
+		return nil, "", "", err
+	}
 	encodedHash := base64.EncodeToString(identHash[:])
 	filename := "routerInfo-" + encodedHash + ".dat"
 	return &ri, routerInfoString, filename, nil
@@ -52,7 +56,10 @@ func GetRouterInfoWithFilenameRaw(cli *client.Client, ctx context.Context, conta
 	if err != nil {
 		return "", "", "", err
 	}
-	identHash := ri.IdentHash()
+	identHash, err := ri.IdentHash()
+	if err != nil {
+		return "", "", "", err
+	}
 	encodedHash := base64.EncodeToString(identHash[:])
 	filename := "routerInfo-" + encodedHash + ".dat"
 	directory := "r" + string(encodedHash[:1])

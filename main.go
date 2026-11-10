@@ -4,23 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/chzyer/readline"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/go-i2p/go-i2p/lib/common/base64"
-	"github.com/go-i2p/go-i2p/lib/common/router_info"
-	"go-i2p-testnet/lib/docker_control"
-	goi2pnode "go-i2p-testnet/lib/go-i2p"
-	"go-i2p-testnet/lib/i2pd"
-	"go-i2p-testnet/lib/monitor"
-	"go-i2p-testnet/lib/utils/logger"
 	"os"
 	"os/signal"
 	"regexp"
 	"strings"
 	"sync"
 	"syscall"
+
+	"go-i2p-testnet/lib/docker_control"
+	goi2pnode "go-i2p-testnet/lib/go-i2p"
+	"go-i2p-testnet/lib/i2pd"
+	"go-i2p-testnet/lib/monitor"
+	"go-i2p-testnet/lib/utils/logger"
+
+	"github.com/chzyer/readline"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
+	"github.com/go-i2p/common/base64"
+	"github.com/go-i2p/common/router_info"
 )
 
 // Router describes a router node participating in the testnet.
@@ -80,7 +82,7 @@ const (
 )
 
 // cleanup removes all created Docker resources: containers, volumes, and network.
-func cleanup(cli *client.Client, ctx context.Context, createdContainers []string, createdVolumes []string, networkName string) {
+func cleanup(cli *client.Client, ctx context.Context, createdContainers, createdVolumes []string, networkName string) {
 	log.WithField("networkName", networkName).Debug("Starting cleanup of Docker resources")
 
 	// Remove containers
@@ -164,7 +166,7 @@ func start(cli *client.Client, ctx context.Context) {
 		"networkID":   networkID,
 	}).Debug("Successfully created network")
 
-	//Create shared volume
+	// Create shared volume
 	log.Debug("Creating shared volume")
 	sharedVolumeName, err = docker_control.CreateSharedVolume(cli, ctx)
 	if err != nil {
@@ -206,6 +208,7 @@ func status(cli *client.Client, ctx context.Context) {
 		fmt.Println("No router containers are running.")
 	}
 }
+
 func usage(cli *client.Client, ctx context.Context) {
 	log.Debug("Fetching usage statistics for router containers")
 
@@ -274,6 +277,7 @@ func usage(cli *client.Client, ctx context.Context) {
 		fmt.Println("No router containers found.")
 	}
 }
+
 func addGOI2PRouter(cli *client.Client, ctx context.Context) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -466,7 +470,9 @@ func syncNetDb(cli *client.Client, ctx context.Context) {
 }
 
 // i2pd transports page session lines look like (after HTML tag stripping):
-//   qGsu: 172.28.0.3:4567 &#8658;  [411894:465166]
+//
+//	qGsu: 172.28.0.3:4567 &#8658;  [411894:465166]
+//
 // ident, peer endpoint, then [sent:received] bytes.
 var i2pdSessionRe = regexp.MustCompile(`([A-Za-z0-9~-]{4}):\s+(\d+\.\d+\.\d+\.\d+):(\d+)\s+\S*\s*\[(\d+):(\d+)\]`)
 
@@ -485,8 +491,10 @@ func showPeers(cli *client.Client, ctx context.Context) {
 	}
 
 	for _, r := range routers {
-		counters, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
-			"echo $(cat /sys/class/net/eth0/statistics/rx_bytes) $(cat /sys/class/net/eth0/statistics/tx_bytes)"})
+		counters, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{
+			"sh", "-c",
+			"echo $(cat /sys/class/net/eth0/statistics/rx_bytes) $(cat /sys/class/net/eth0/statistics/tx_bytes)",
+		})
 		rxTx := strings.Fields(strings.TrimSpace(counters))
 		traffic := ""
 		if err == nil && len(rxTx) == 2 {
@@ -499,8 +507,10 @@ func showPeers(cli *client.Client, ctx context.Context) {
 		// i2pd reports its transport sessions (including UDP-based SSU2)
 		// on the webconsole transports page.
 		if r.Type == "i2pd" {
-			out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
-				`wget -qO- "http://127.0.0.1:7070/?page=transports" 2>/dev/null | sed 's/<[^>]*>/ /g'`})
+			out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{
+				"sh", "-c",
+				`wget -qO- "http://127.0.0.1:7070/?page=transports" 2>/dev/null | sed 's/<[^>]*>/ /g'`,
+			})
 			if err == nil {
 				transport := "?"
 				for _, line := range strings.Split(out, "\n") {
@@ -523,8 +533,10 @@ func showPeers(cli *client.Client, ctx context.Context) {
 		}
 
 		// TCP view (catches NTCP2 and anything go-i2p establishes)
-		out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{"sh", "-c",
-			"netstat -tn 2>/dev/null | grep ESTABLISHED | grep 172.28. || true"})
+		out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, []string{
+			"sh", "-c",
+			"netstat -tn 2>/dev/null | grep ESTABLISHED | grep 172.28. || true",
+		})
 		if err != nil {
 			fmt.Printf("  error inspecting connections: %v\n", err)
 			continue
@@ -575,8 +587,10 @@ func verifyNetDb(cli *client.Client, ctx context.Context) {
 		case "goi2p":
 			netDbDir = goi2pnode.GoI2PNetDbDir
 		}
-		countCmd := []string{"sh", "-c",
-			fmt.Sprintf("find %s -name 'routerInfo-*.dat' 2>/dev/null | wc -l", netDbDir)}
+		countCmd := []string{
+			"sh", "-c",
+			fmt.Sprintf("find %s -name 'routerInfo-*.dat' 2>/dev/null | wc -l", netDbDir),
+		}
 		out, err := docker_control.ExecInContainer(cli, ctx, r.ContainerID, countCmd)
 		if err != nil {
 			fmt.Printf("%-20s %-8s error: %v\n", r.Name, r.Type, err)
@@ -659,7 +673,7 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	//Begin command loop
+	// Begin command loop
 	// Setup readline for command line input
 	log.Debug("Initializing readline interface")
 	rl, err := readline.NewEx(&readline.Config{
@@ -677,7 +691,7 @@ func main() {
 	fmt.Println("Logging is available, check README.md for details. Set env DEBUG_TESTNET to debug, warn or error")
 	for {
 		line, err := rl.Readline()
-		if err != nil { //EOF
+		if err != nil { // EOF
 			break
 		}
 		line = strings.TrimSpace(line)
@@ -868,10 +882,19 @@ func main() {
 				fmt.Println("Successfully read router info")
 				fmt.Printf("Options: %v\n", ri.Options())
 				fmt.Printf("Signature: %s\n", ri.Signature())
-				fmt.Printf("GoodVersion: %v\n", ri.GoodVersion())
-				identHash := ri.IdentHash()
-				encodedHash := base64.EncodeToString(identHash[:])
-				fmt.Printf("IdentHash: %v\n", encodedHash)
+				good, err := ri.GoodVersion()
+				if err != nil {
+					fmt.Printf("Error checking good version: %v\n", err)
+				} else {
+					fmt.Printf("GoodVersion: %v\n", good)
+				}
+				identHash, err := ri.IdentHash()
+				if err != nil {
+					fmt.Printf("Error reading ident hash: %v\n", err)
+				} else {
+					encodedHash := base64.EncodeToString(identHash[:])
+					fmt.Printf("IdentHash: %v\n", encodedHash)
+				}
 				fmt.Printf("Network: %v\n", ri.Network())
 				fmt.Printf("Peersize: %v\n", ri.PeerSize())
 				fmt.Printf("Published: %v\n", ri.Published())

@@ -3,8 +3,9 @@ package utils
 import (
 	"archive/tar"
 	"bytes"
-	"go-i2p-testnet/lib/utils/logger"
 	"io"
+
+	"go-i2p-testnet/lib/utils/logger"
 )
 
 var log = logger.GetTestnetLogger()
@@ -20,7 +21,7 @@ func CreateTarArchive(filename, content string) (io.Reader, error) {
 
 	hdr := &tar.Header{
 		Name: filename,
-		Mode: 0600,
+		Mode: 0o600,
 		Size: int64(len(content)),
 	}
 

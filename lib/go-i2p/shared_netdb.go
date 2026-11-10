@@ -19,7 +19,8 @@ const GoI2PNetDbDir = "/root/.go-i2p/config/netDb"
 func SyncSharedToNetDb(cli *client.Client, ctx context.Context, containerID string) error {
 	cmd := []string{"sh", "-c", fmt.Sprintf(
 		"mkdir -p %s && if [ -d /shared/netDb ]; then cp -r /shared/netDb/. %s/; fi",
-		GoI2PNetDbDir, GoI2PNetDbDir)}
+		GoI2PNetDbDir, GoI2PNetDbDir,
+	)}
 	out, err := docker_control.ExecInContainer(cli, ctx, containerID, cmd)
 	if err != nil {
 		log.WithFields(map[string]interface{}{
@@ -39,7 +40,8 @@ func SyncSharedToNetDb(cli *client.Client, ctx context.Context, containerID stri
 func SyncNetDbToShared(cli *client.Client, ctx context.Context, containerID string) error {
 	cmd := []string{"sh", "-c", fmt.Sprintf(
 		"mkdir -p /shared/netDb && if [ -d %s ]; then cp -r %s/. /shared/netDb/; fi",
-		GoI2PNetDbDir, GoI2PNetDbDir)}
+		GoI2PNetDbDir, GoI2PNetDbDir,
+	)}
 	out, err := docker_control.ExecInContainer(cli, ctx, containerID, cmd)
 	if err != nil {
 		log.WithFields(map[string]interface{}{

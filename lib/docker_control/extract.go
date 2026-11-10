@@ -5,13 +5,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/docker/docker/client"
 	"io"
 	"path/filepath"
+
+	"github.com/docker/docker/client"
 )
 
 // ReadFileFromContainer reads a file from inside a container and returns its contents
-func ReadFileFromContainer(cli *client.Client, ctx context.Context, containerID string, filePath string) (string, error) {
+func ReadFileFromContainer(cli *client.Client, ctx context.Context, containerID, filePath string) (string, error) {
 	// Create a reader for the file content
 	reader, stat, err := cli.CopyFromContainer(ctx, containerID, filePath)
 	if err != nil {
@@ -38,7 +39,7 @@ func ReadFileFromContainer(cli *client.Client, ctx context.Context, containerID 
 	return contentStr, nil // Returns a tar archive?
 }
 
-func ReadFileFromContainerUnarchive(cli *client.Client, ctx context.Context, containerID string, filePath string) (string, error) {
+func ReadFileFromContainerUnarchive(cli *client.Client, ctx context.Context, containerID, filePath string) (string, error) {
 	// Create a reader for the file content
 	reader, _, err := cli.CopyFromContainer(ctx, containerID, filePath)
 	if err != nil {

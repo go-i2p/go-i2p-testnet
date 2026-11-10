@@ -3,6 +3,7 @@ package go_i2p
 import (
 	"context"
 	"fmt"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"go-i2p-testnet/lib/utils"
@@ -11,7 +12,7 @@ import (
 
 var log = logger.GetTestnetLogger()
 
-func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName string, configData string) error {
+func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName, configData string) error {
 	log.WithField("volumeName", volumeName).Debug("Starting config copy to volume")
 
 	tempContainerConfig := &container.Config{

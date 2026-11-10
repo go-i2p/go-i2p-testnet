@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"gopkg.in/ini.v1"
+
+	"go-i2p-testnet/lib/utils"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"go-i2p-testnet/lib/utils"
 )
 
 // I2PDDataDir is the i2pd data directory inside router containers.
@@ -246,7 +248,7 @@ func GenerateRouterConfig(routerID int, ip string) (string, error) {
 	return configData, nil
 }
 
-func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName string, configData string) error {
+func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName, configData string) error {
 	// Create a temporary container to copy data into the volume
 	log.WithField("volumeName", volumeName).Debug("Starting config copy to volume")
 
