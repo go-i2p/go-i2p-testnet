@@ -50,6 +50,11 @@ type subscriber struct {
 
 // LogManager captures docker logs of router containers to files under logDir
 // and multiplexes them to live subscribers for side-by-side viewing.
+//
+// Routers can echo operator secrets in their own logs (i2pd at debug level
+// logs the I2PControl password when the dashboard authenticates), so every
+// captured line is scrubbed against Secrets before it reaches a file or a
+// subscriber.
 type LogManager struct {
 	cli       *client.Client
 	logDir    string
@@ -57,6 +62,7 @@ type LogManager struct {
 	caps      map[string]*capture // keyed by containerID
 	subs      map[*subscriber]struct{}
 	nextColor int
+	secrets   []string
 }
 
 func NewLogManager(cli *client.Client, logDir string) *LogManager {
@@ -66,6 +72,27 @@ func NewLogManager(cli *client.Client, logDir string) *LogManager {
 		caps:   make(map[string]*capture),
 		subs:   make(map[*subscriber]struct{}),
 	}
+}
+
+// SetSecrets registers strings that must never appear in captured logs.
+// Call before StartCapture so the first line is already scrubbed.
+func (m *LogManager) SetSecrets(secrets ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secrets = append(m.secrets, secrets...)
+}
+
+// scrub removes registered secrets from a log line.
+func (m *LogManager) scrub(line string) string {
+	m.mu.Lock()
+	secrets := m.secrets
+	m.mu.Unlock()
+	for _, s := range secrets {
+		if s != "" && strings.Contains(line, s) {
+			line = strings.ReplaceAll(line, s, "[REDACTED]")
+		}
+	}
+	return line
 }
 
 // StartCapture begins following the container's logs. Each session truncates
@@ -175,6 +202,7 @@ func (m *LogManager) follow(ctx context.Context, c *capture, since string) (stri
 		if ts, _, found := strings.Cut(line, " "); found {
 			lastTS = ts
 		}
+		line = m.scrub(line)
 		if _, err := c.file.WriteString(line + "\n"); err != nil {
 			log.WithError(err).WithField("name", c.name).Error("Failed to write log line")
 		}
