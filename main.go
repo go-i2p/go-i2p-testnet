@@ -783,6 +783,8 @@ func main() {
 
 	// Capture router logs to per-router files under ./logs
 	logMgr = monitor.NewLogManager(cli, "logs")
+	// Routers may echo this password in their own (captured) logs; scrub it.
+	logMgr.SetSecrets(i2pControlPassword)
 
 	// Ensure cleanup is performed on exit
 	defer func() {

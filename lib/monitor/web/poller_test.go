@@ -262,3 +262,35 @@ func TestPollerHistoryCapped(t *testing.T) {
 		t.Fatalf("history not capped at %d: %d", HistorySamples, len(st.History))
 	}
 }
+
+func TestSweepStaleMarksOldSamplesAmber(t *testing.T) {
+	old := time.Now().Add(-(StaleIntervals + 1) * time.Minute)
+	p := staticPoller(&RouterStatus{
+		Name: "slowpoke", Impl: "i2pd", State: StateUp,
+		Sample: sample(), LastSeen: old,
+	})
+	p.interval = time.Minute
+	p.sweepStale()
+	st, _ := p.Get("slowpoke")
+	if st.State != StateStale {
+		t.Errorf("state = %s, want stale after missed intervals", st.State)
+	}
+	// A recently-seen router must remain up.
+	fresh := &RouterStatus{Name: "fresh", State: StateUp, Sample: sample(), LastSeen: time.Now()}
+	p2 := staticPoller(fresh)
+	p2.sweepStale()
+	if st2, _ := p2.Get("fresh"); st2.State != StateUp {
+		t.Errorf("fresh router state = %s, want up", st2.State)
+	}
+}
+
+func TestStaleRendersAmberClass(t *testing.T) {
+	stale := &RouterStatus{Name: "amber", Impl: "i2pd", State: StateStale, Sample: sample(), LastSeen: time.Now().Add(-time.Minute)}
+	s := newTestServer(t, staticPoller(stale))
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="stale"`) {
+		t.Error("stale router must render amber class")
+	}
+}
