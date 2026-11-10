@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"gopkg.in/ini.v1"
 
@@ -53,13 +54,14 @@ type I2PDConfig struct {
 	Nat           bool   `ini:"nat"`
 	ReservedRange bool   `ini:"reservedrange"`
 	// Sections
-	NTCP2   NTCP2Config   `ini:"ntcp2"`
-	SSU2    SSU2Config    `ini:"ssu2"`
-	HTTP    HTTPConfig    `ini:"http"`
-	Reseed  ReseedConfig  `ini:"reseed"`
-	Limits  LimitsConfig  `ini:"limits"`
-	Persist PersistConfig `ini:"persist"`
-	Nettime NettimeConfig `ini:"nettime"`
+	NTCP2      NTCP2Config      `ini:"ntcp2"`
+	SSU2       SSU2Config       `ini:"ssu2"`
+	HTTP       HTTPConfig       `ini:"http"`
+	I2PControl I2PControlConfig `ini:"i2pcontrol"`
+	Reseed     ReseedConfig     `ini:"reseed"`
+	Limits     LimitsConfig     `ini:"limits"`
+	Persist    PersistConfig    `ini:"persist"`
+	Nettime    NettimeConfig    `ini:"nettime"`
 }
 
 // NTCP2 Section
@@ -86,6 +88,19 @@ type HTTPConfig struct {
 	User    string `ini:"user,omitempty"`
 	Pass    string `ini:"pass,omitempty"`
 	Lang    string `ini:"lang"`
+}
+
+// I2PControl Section
+// Exposes the I2PControl JSON-RPC interface (HTTPS on i2pd) that the
+// testnet dashboard polls. Password comes from the testnet's shared
+// dashboard password; it is never logged.
+type I2PControlConfig struct {
+	Enabled  bool   `ini:"enabled"`
+	Address  string `ini:"address"`
+	Port     int    `ini:"port"`
+	Password string `ini:"password,omitempty"`
+	Cert     string `ini:"cert,omitempty"`
+	Key      string `ini:"key,omitempty"`
 }
 
 // Reseed Section
@@ -170,6 +185,15 @@ func GenerateDefaultI2PDConfig() *I2PDConfig {
 			Lang:    "english",
 		},
 
+		// I2PControl section: disabled by default (matches i2pd's own
+		// default); GenerateRouterConfig enables it for testnet routers so
+		// the dashboard can poll them.
+		I2PControl: I2PControlConfig{
+			Enabled: false,
+			Address: "127.0.0.1",
+			Port:    7650,
+		},
+
 		// Reseed section
 		Reseed: ReseedConfig{
 			Verify:    true,
@@ -200,7 +224,10 @@ func GenerateDefaultI2PDConfig() *I2PDConfig {
 	}
 }
 
-func GenerateRouterConfig(routerID int, ip string) (string, error) {
+// GenerateRouterConfig builds the i2pd.conf for one testnet router.
+// i2pControlPassword enables the I2PControl endpoint the dashboard polls;
+// it is written to the router config only and must never be logged.
+func GenerateRouterConfig(routerID int, ip, i2pControlPassword string) (string, error) {
 	log.WithFields(map[string]interface{}{
 		"routerID": routerID,
 		"ip":       ip,
@@ -214,6 +241,16 @@ func GenerateRouterConfig(routerID int, ip string) (string, error) {
 	config.Floodfill = true
 	// Publish the container IP so peers can reach this router
 	config.Host = ip
+	// Serve I2PControl on the container's routable testnet IP so the
+	// dashboard (running on the Docker host) can reach it over the
+	// internal bridge. i2pd generates a self-signed TLS cert for it into
+	// the datadir on first start, which the dashboard pins.
+	config.I2PControl = I2PControlConfig{
+		Enabled:  true,
+		Address:  ip,
+		Port:     7650,
+		Password: i2pControlPassword,
+	}
 	// The testnet network is internal-only: never attempt clearnet reseed
 	config.Reseed = ReseedConfig{
 		Verify:    false,
@@ -240,12 +277,28 @@ func GenerateRouterConfig(routerID int, ip string) (string, error) {
 
 	configData := buffer.String()
 
+	// The config contains the I2PControl password; never log it verbatim.
 	log.WithFields(map[string]interface{}{
 		"routerID": routerID,
-		"config":   configData,
+		"config":   redactConfigPassword(configData),
 	}).Debug("i2pd router configuration generated successfully")
 
 	return configData, nil
+}
+
+// redactConfigPassword masks password values in config text so generated
+// configs can be logged for debugging without leaking the I2PControl
+// password.
+func redactConfigPassword(configData string) string {
+	lines := strings.Split(configData, "\n")
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(line)), "password") {
+			if eq := strings.Index(line, "="); eq >= 0 {
+				lines[i] = line[:eq+1] + " [redacted]"
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName, configData string) error {

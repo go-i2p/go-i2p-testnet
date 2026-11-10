@@ -14,7 +14,7 @@ BUILD_DIR=bin
 # Main packages
 MAIN1=main.go
 # Targets
-.PHONY: all build clean test run install uninstall
+.PHONY: all build clean test run dashboard install uninstall
 
 all: test build
 
@@ -31,3 +31,7 @@ test:
 
 run: build
 	cd $(BUILD_DIR) && ./$(BINARY_NAME1)
+# Run only the status dashboard against an already-running testnet
+# (routers are discovered from the live Docker topology).
+dashboard: build
+	cd $(BUILD_DIR) && ./$(BINARY_NAME1) -dashboard

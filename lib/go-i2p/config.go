@@ -86,7 +86,15 @@ func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName, con
 // local netDb (populated via the sync commands) instead of clearnet reseed
 // servers. All paths use the binary's defaults under /root/.go-i2p, which
 // live on the per-router volume mounted at /root.
-func GenerateRouterConfig(routerID int) string {
+//
+// i2pControlPassword enables the I2PControl JSON-RPC endpoint the testnet
+// dashboard polls. go-i2p binds it to localhost by default, which is
+// unreachable across container boundaries; we bind it to the container's
+// testnet IP with an explicit plaintext allowance (the bridge is
+// internal-only) and a non-default password, which is also what go-i2p's
+// own bind policy requires for non-loopback binds. The password lives only
+// in this config file on the router volume and is never logged.
+func GenerateRouterConfig(routerID int, i2pControlPassword string) string {
 	log.WithField("routerID", routerID).Debug("Generating go-i2p router config")
 	return `# go-i2p testnet node: bootstrap only from the local netDb,
 # never from clearnet reseed servers (the network is internal-only).
@@ -96,5 +104,13 @@ bootstrap:
 netdb:
   # peers run netid 5; strict validation would reject their RouterInfos
   strict-routerinfo-network-validation: false
+i2pcontrol:
+  enabled: true
+  address: "0.0.0.0:7650"
+  password: "` + i2pControlPassword + `"
+  use_https: false
+  # The testnet bridge is internal-only; go-i2p requires this explicit
+  # opt-in for a non-loopback plaintext bind instead of silently allowing it.
+  allow_plaintext_non_loopback: true
 `
 }

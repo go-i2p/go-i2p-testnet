@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,11 +11,14 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"go-i2p-testnet/lib/docker_control"
 	goi2pnode "go-i2p-testnet/lib/go-i2p"
 	"go-i2p-testnet/lib/i2pd"
 	"go-i2p-testnet/lib/monitor"
+	"go-i2p-testnet/lib/monitor/dashboard"
+	"go-i2p-testnet/lib/monitor/web"
 	"go-i2p-testnet/lib/utils/logger"
 
 	"github.com/chzyer/readline"
@@ -45,12 +49,89 @@ var (
 	mu                sync.Mutex // To protect access to the slices
 	log               = logger.GetTestnetLogger()
 	logMgr            *monitor.LogManager
+
+	// Dashboard state: one embedded web server polling every router's
+	// I2PControl interface. Started with "start", stopped with "stop"/"exit".
+	i2pControlPassword string
+	dashPoller         *web.Poller
+	dashServer         *web.Server
+	dashCancel         context.CancelFunc
+	dashBindAddr       = "127.0.0.1:8765"
+	dashInsecureTLS    = false
+	dashDisabled       = false
 )
+
+// cliRouters snapshots the in-memory router list for the dashboard. Callers
+// must not hold mu.
+func cliRouters() []dashboard.Router {
+	mu.Lock()
+	defer mu.Unlock()
+	out := make([]dashboard.Router, 0, len(routers))
+	for _, r := range routers {
+		out = append(out, dashboard.Router{
+			Name:        r.Name,
+			Impl:        r.Type,
+			IP:          r.IP,
+			ContainerID: r.ContainerID,
+		})
+	}
+	return out
+}
+
+// startDashboard boots the poller + web server. It is called from "start"
+// (unless disabled) and from the standalone dashboard subcommand.
+func startDashboard(cli *client.Client, ctx context.Context, dockerDiscovery bool) error {
+	if dashPoller != nil {
+		return nil // already running
+	}
+	resolver := dashboard.NewResolver(cli)
+	var src *dashboard.Source
+	if dockerDiscovery {
+		src = dashboard.NewSource(dashboard.RoutersFromDocker(cli, NETWORK), resolver, i2pControlPassword, dashInsecureTLS)
+	} else {
+		src = dashboard.NewSource(cliRouters, resolver, i2pControlPassword, dashInsecureTLS)
+	}
+	if dashInsecureTLS {
+		fmt.Println("WARNING: dashboard TLS verification is DISABLED (-insecure-tls). Router certs are not checked.")
+		log.Warn("dashboard running with TLS verification disabled")
+	}
+	dashPoller = web.NewPoller(5*time.Second, 5*time.Second, src.Targets)
+	dashPoller.Start(ctx)
+
+	srv, err := web.NewServer(web.ServerConfig{BindAddr: dashBindAddr, Poller: dashPoller})
+	if err != nil {
+		return err
+	}
+	dashServer = srv
+	dashCtx, cancel := context.WithCancel(context.Background())
+	dashCancel = cancel
+	go func() {
+		if err := srv.Serve(dashCtx); err != nil {
+			log.WithError(err).Error("dashboard server stopped with error")
+		}
+	}()
+	fmt.Printf("Dashboard: http://%s/ (I2PControl password from %s or logs/%s)\n",
+		dashBindAddr, dashboard.EnvPassword, dashboard.PasswordFileName)
+	return nil
+}
+
+func stopDashboard() {
+	if dashCancel != nil {
+		dashCancel()
+		dashCancel = nil
+	}
+	if dashPoller != nil {
+		dashPoller.Stop()
+		dashPoller = nil
+	}
+	dashServer = nil
+}
 
 var completer = readline.NewPrefixCompleter(
 	readline.PcItem("help"),
 	readline.PcItem("start"),
 	readline.PcItem("stop"),
+	readline.PcItem("dashboard"),
 	readline.PcItem("status"),
 	readline.PcItem("usage"),
 	readline.PcItem("build"),
@@ -298,7 +379,7 @@ func addGOI2PRouter(cli *client.Client, ctx context.Context) error {
 		"ip":       nextIP,
 	}).Debug("Generating router configuration")
 
-	configData := goi2pnode.GenerateRouterConfig(routerID)
+	configData := goi2pnode.GenerateRouterConfig(routerID, i2pControlPassword)
 
 	// Create the container
 	log.Debug("Creating router container")
@@ -346,7 +427,7 @@ func addI2PDRouter(cli *client.Client, ctx context.Context) error {
 	}).Debug("Generating router configuration")
 
 	// Generate the configuration data
-	configData, err := i2pd.GenerateRouterConfig(routerID, nextIP)
+	configData, err := i2pd.GenerateRouterConfig(routerID, nextIP, i2pControlPassword)
 	if err != nil {
 		log.WithError(err).Error("Failed to generate i2pd router config")
 		return err
@@ -647,14 +728,57 @@ func streamLogs(rl *readline.Instance, target string) {
 	close(done)
 }
 
+// dashboardFlags defines the dashboard-related command line flags shared by
+// interactive and standalone modes.
+func dashboardFlags(fs *flag.FlagSet) {
+	fs.StringVar(&dashBindAddr, "dashboard-addr", "127.0.0.1:8765",
+		"dashboard listen address (keep loopback unless you know better)")
+	fs.BoolVar(&dashDisabled, "no-dashboard", false,
+		"do not start the status dashboard with the testnet")
+	fs.BoolVar(&dashInsecureTLS, "insecure-tls", false,
+		"skip TLS verification for i2pd I2PControl (explicit opt-in; warns)")
+}
+
 func main() {
 	ctx := context.Background()
+
+	fs := flag.NewFlagSet("go-i2p-testnet", flag.ExitOnError)
+	dashboardFlags(fs)
+	standalone := fs.Bool("dashboard", false,
+		"run only the dashboard against the currently running testnet (discovered from Docker)")
+	fs.Parse(os.Args[1:])
 
 	// Initialize Docker client
 	log.Debug("Initializing Docker client")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		log.WithError(err).Fatal("Failed to create Docker client")
+	}
+
+	// Resolve the I2PControl password before any router config is generated.
+	// Env > logs/.i2pcontrol-password > freshly generated (file, 0600).
+	// The well-known default is refused unless local testing is opted in.
+	i2pControlPassword, err = dashboard.ResolvePassword("logs")
+	if err != nil {
+		log.WithError(err).Fatal("I2PControl password configuration failed")
+	}
+
+	// Standalone dashboard mode: poll the live testnet discovered from
+	// Docker, serve the UI, wait for a signal. No CLI, no lifecycle changes.
+	if *standalone {
+		if dashDisabled {
+			fmt.Println("nothing to do: -dashboard and -no-dashboard are mutually exclusive")
+			os.Exit(2)
+		}
+		sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := startDashboard(cli, sigCtx, true); err != nil {
+			log.WithError(err).Fatal("dashboard failed to start")
+		}
+		fmt.Println("press Ctrl-C to stop")
+		<-sigCtx.Done()
+		stopDashboard()
+		return
 	}
 
 	// Capture router logs to per-router files under ./logs
@@ -667,6 +791,7 @@ func main() {
 			logMgr.StopAll()
 			cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
 		}
+		stopDashboard()
 	}()
 
 	// Set up signal handling to gracefully handle termination
@@ -711,9 +836,23 @@ func main() {
 				fmt.Println("Testnet is already running")
 			} else {
 				start(cli, ctx)
+				if !dashDisabled {
+					if err := startDashboard(cli, ctx, false); err != nil {
+						fmt.Printf("dashboard failed to start: %v\n", err)
+					}
+				}
+			}
+		case "dashboard":
+			if !running {
+				fmt.Println("Testnet isn't running")
+			} else if dashPoller != nil {
+				fmt.Printf("Dashboard already running at http://%s/\n", dashBindAddr)
+			} else if err := startDashboard(cli, ctx, false); err != nil {
+				fmt.Printf("dashboard failed to start: %v\n", err)
 			}
 		case "stop":
 			if running {
+				stopDashboard()
 				logMgr.StopAll()
 				cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
 				running = false
@@ -828,6 +967,7 @@ func main() {
 			streamLogs(rl, parts[1])
 		case "exit":
 			fmt.Println("Exiting...")
+			stopDashboard()
 			if running {
 				logMgr.StopAll()
 				cleanup(cli, ctx, createdContainers, createdVolumes, NETWORK)
@@ -918,6 +1058,7 @@ func showHelp() {
 	fmt.Println("  help						- Show this help message")
 	fmt.Println("  start						- Start the testnet")
 	fmt.Println("  stop						- Stop testnet and cleanup routers")
+	fmt.Println("  dashboard					- Show dashboard URL / start it if stopped")
 	fmt.Println("  status					- Show status")
 	fmt.Println("  usage                  			    - Show memory and CPU usage of router containers")
 	fmt.Println("  build						- Build docker images for nodes")

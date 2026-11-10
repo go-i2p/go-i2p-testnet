@@ -40,7 +40,8 @@ stop                 # tear everything down
 
 | Command | Description |
 |---|---|
-| `start` / `stop` | Create/destroy the testnet (network, shared volume, all routers) |
+| `start` / `stop` | Create/destroy the testnet (network, shared volume, all routers); `start` also boots the status dashboard |
+| `dashboard` | Show the dashboard URL / start it if it was disabled |
 | `status` | List router containers |
 | `usage` | Memory/CPU usage per router |
 | `build` / `rebuild` / `remove_images` | Manage the node docker images |
@@ -131,6 +132,52 @@ exercise):
 Logging of the testnet tool itself is controlled with the `DEBUG_TESTNET`
 environment variable (`debug`, `warn`, or `error`; unset disables logging).
 This is separate from router logs, which are always captured to `./logs/`.
+
+## Status dashboard
+
+`start` also boots a self-contained monitoring dashboard in the same
+process (stdlib only: no external web server, database, CDN, or frontend
+framework; history is in memory). It polls every router's I2PControl
+interface concurrently (5 s interval, ~5 s per-router timeout — one down
+router never delays the others) and shows:
+
+- `http://127.0.0.1:8765/` — summary totals plus a per-router table
+  (version, net status, uptime, tunnels, peers, bandwidth), refreshing
+  every 5 seconds. Unreachable routers are shown **red** with the last
+  error; data older than three poll intervals is **amber** (stale).
+- `http://127.0.0.1:8765/router/<name>` — latest sample and the last 60
+  samples for one router.
+- `http://127.0.0.1:8765/api/status` — JSON snapshot.
+- `http://127.0.0.1:8765/healthz` — 200 while the dashboard runs.
+
+To disable it: `./bin/go-i2p-testnet -no-dashboard`. To run it standalone
+against an already-running testnet (routers discovered from the live Docker
+topology, nothing hardcoded): `make dashboard` or
+`./bin/go-i2p-testnet -dashboard`.
+
+**How routers are polled:** every router now serves I2PControl (JSON-RPC on
+port 7650). i2pd does so over HTTPS with a self-signed certificate it
+generates into its datadir; the dashboard reads that certificate through the
+Docker API and trusts *only* it (certificate pinning) — verification is
+never disabled silently. Use `-insecure-tls` to opt out of pinning
+explicitly (it prints a loud warning). go-i2p serves plaintext HTTP on the
+internal-only bridge, with its own `allow_plaintext_non_loopback` policy
+opt-in set in the generated config.
+
+**Password:** all routers share one I2PControl password. The CLI resolves it
+in this order: the `GO_I2P_TESTNET_I2PCONTROL_PASSWORD` environment
+variable, then the gitignored file `logs/.i2pcontrol-password`, then a
+freshly generated random password written to that file (mode 0600). The
+dashboard (including standalone mode) reads the same sources. The
+well-known default `itoopie` is refused unless you are doing local testing
+and set `TESTNET_ALLOW_DEFAULT_I2PCONTROL_PASSWORD=1`. Passwords and auth
+tokens are never logged or rendered.
+
+```shell
+export GO_I2P_TESTNET_I2PCONTROL_PASSWORD='pick-a-strong-one'
+make build && ./bin/go-i2p-testnet   # then: start; add i2pd_router; ...
+# open http://127.0.0.1:8765/
+```
 
 ## TO DO
  - [ ] Port forwarding
