@@ -1,8 +1,9 @@
 # Monitoring Discovery: routers, I2PControl, and the testnet launch path
 
 Findings from reading the README, `main.go`, the config generators, the
-dockerfiles, and live probes against real routers (i2pd 2.60.0 from Alpine
-3.22 — the same package the `i2pd-node` image installs — and upstream
+dockerfiles, and live probes against real routers (i2pd from Alpine
+3.22 — the same package the `i2pd-node` image installs; it resolves to
+**2.56.0** here, verified with `i2pd --version` — and upstream
 `github.com/go-i2p/go-i2p` master). This is the input for the dashboard work;
 see `docs/monitoring-verification.md` for the end-to-end results.
 
@@ -40,8 +41,9 @@ Everything is orchestrated by the Go CLI in `main.go` against the Docker API
 
 ### i2pd routers
 
-- Image `i2pd-node` = `alpine:3.22` + `apk add i2pd` (currently **i2pd
-  2.60.0**), CMD `i2pd --conf=/var/lib/i2pd/i2pd.conf
+- Image `i2pd-node` = `alpine:3.22` + `apk add i2pd` (**2.56.0** as built
+  here; the package moves, so check `i2pd --version` before relying on the
+  property table below), CMD `i2pd --conf=/var/lib/i2pd/i2pd.conf
   --datadir=/var/lib/i2pd`
   (`lib/dockerfiles/i2pd-node.dockerfile`, `lib/i2pd/container.go`).
 - Config generated in `lib/i2pd/config.go` (`GenerateRouterConfig`) via
@@ -71,7 +73,7 @@ Everything is orchestrated by the Go CLI in `main.go` against the Docker API
 
 ## Live I2PControl probes (ground truth for property names)
 
-Probe setup: i2pd 2.60.0 in a container with
+Probe setup: i2pd 2.56.0 in a container with
 `[i2pcontrol] enabled=true address=0.0.0.0 port=7650 password=<non-default>`,
 HTTPS on 7650, self-signed `i2pcontrol.crt.pem` (subject/issuer
 `CN=i2pd.i2pcontrol`, O=Purple I2P, no SAN, valid 10 years) generated into the
@@ -81,7 +83,7 @@ datadir on first start.
   `{"result":{"API":1,"Token":"…"}}`. **i2pd quirk:** a *wrong* password
   returns `{"result":{}}` with HTTP 200 and no `error` member — a missing
   `Token` must be treated as auth failure.
-- `RouterInfo` on i2pd 2.60.0 returns only the keys it supports; observed
+- `RouterInfo` on i2pd 2.56.0 returns only the keys it supports; observed
   response for a requested set:
 
   | property | observed type/value |
@@ -89,12 +91,12 @@ datadir on first start.
   | `i2p.router.status` | string `"0"` (a *number-as-string* in i2pd, not free text) |
   | `i2p.router.net.status` | number `2` (FIREWALLED on a single-router net — expected) |
   | `i2p.router.uptime` | number, ms |
-  | `i2p.router.version` | string `"2.60.0"` |
+  | `i2p.router.version` | string `"2.56.0"` |
   | `i2p.router.net.tunnels.inbound` / `.outbound` | number |
   | `i2p.router.net.tunnels.participating` | number |
   | `i2p.router.net.bw.inbound.1s` / `.15s`, `outbound.1s` / `.15s` | number, bytes/s |
   | `i2p.router.netdb.knownpeers` / `.activepeers` | number |
-  | `i2p.router.net.tunnels.pools`, `i2p.router.net.connections`, `i2p.router.netdb.isreseeding`, `i2p.router.hash` | **absent from response** (i2pd 2.60 does not serve them via I2PControl) |
+  | `i2p.router.net.tunnels.pools`, `i2p.router.net.connections`, `i2p.router.netdb.isreseeding`, `i2p.router.hash` | **absent from response** (i2pd 2.56 does not serve them via I2PControl) |
 
 - **i2pd quirk:** `RouterInfo` answers even with a bad/missing `Token` (no
   auth enforcement on that method) — the dashboard still authenticates
@@ -123,8 +125,10 @@ re-authentication: JSON-RPC error codes -32000/-32001/-32003/-32004, or an
   `i2pcontrol: address: "0.0.0.0:7650"`, `password: <…>`,
   `use_https: false`, `allow_plaintext_non_loopback: true` (the network is
   internal-only; this satisfies go-i2p's bind policy explicitly instead of
-  silently). The same flags are passed on the command line so they hold even
-  if the config file isn't picked up, matching the existing pattern.
+  silently). Only the *bootstrap* flags are repeated on the command line
+  (`lib/go-i2p/container.go`); the i2pcontrol settings live solely in
+  `config.yaml`, so if that file were not read the endpoint would fall back
+  to `localhost:7650` and be unreachable.
 
 ## Password handling
 
@@ -134,7 +138,12 @@ re-authentication: JSON-RPC error codes -32000/-32001/-32003/-32004, or an
   dashboard can read it. The I2PControl default `itoopie` is rejected unless
   local-testing opt-in `TESTNET_ALLOW_DEFAULT_I2PCONTROL_PASSWORD=1` is set —
   "fail if the default password is still in use outside local testing".
-- Never logged or displayed.
+- Never logged or rendered by this tool. Note the boundary: i2pd prints the
+  password it authenticates with at `loglevel=debug`, and that goes to the
+  container's stdout, which `docker logs` exposes and this tool cannot scrub.
+  Routers therefore default to `loglevel=info` (`TESTNET_I2PD_LOGLEVEL=debug`
+  opts back in, with a warning). Captured files under `./logs/` are scrubbed
+  at any level.
 
 ## TLS trust
 
@@ -143,7 +152,7 @@ re-authentication: JSON-RPC error codes -32000/-32001/-32003/-32004, or an
   it loads the router-generated `i2pcontrol.crt.pem` from the router's
   datadir volume (via the Docker API) and trusts *only* that exact
   certificate; everything else is rejected. An explicit
-  `-insecure-tls-skip-verify` flag exists and prints a loud warning on every
+  `-insecure-tls` flag exists and prints a loud warning on every
   use; verification is never disabled silently. go-i2p runs plaintext HTTP on
   the internal bridge (its own policy requires the explicit opt-in above).
 
@@ -165,3 +174,65 @@ parallel launcher. `make dashboard` (a `dashboard` subcommand of the same
 binary) runs it standalone for an already-running testnet, discovering
 routers from the live Docker network by container name prefix and per-router
 config — still nothing hardcoded.
+
+## Where edges can come from (probed against live routers)
+
+I2PControl reports peer *counts* but never *which* peers, so a topology view
+cannot be built from it. Three independent sources were probed and the first
+two are what the dashboard uses:
+
+1. **i2pd webconsole transports page** (`?page=transports`, reachable only
+   from inside the container). After stripping tags, a session row looks like:
+
+   ```text
+    SSU2 ( 1 )
+   T2gE: 172.28.0.3:4567 &#8658;  [163195:176973]
+   ```
+
+   The leading token is the first four characters of the **peer's ident hash**,
+   the arrow arrives as the `&#8658;` entity (so a separator pattern must not
+   assume `=>`), and the bracketed pair is sent/received bytes. The section
+   heading names the transport. This yields observed edges.
+
+2. **netDb file names.** i2pd stores peers as
+   `netDb/r<X>/routerInfo-<base64 ident hash>.dat`. The hash in the file name
+   is the same value the transports page truncates, which is what lets a
+   session be matched to a roster router by identity rather than guessed from
+   an address. Membership without a session yields an *inferred* edge.
+
+3. **the router's own identity.** `/var/lib/i2pd/router.info` parses with the
+   dependency this repo already carries (`go-i2p/common/router_info`), and
+   `IdentHash()` returns exactly the base64 string used in the two sources
+   above. Verified: a live router's `router.info` yields
+   `AutoCdqqsW~S6nnqEG~BQgcUhMdxbLqwWN3qO0h0zso=`, which is the name of its own
+   file in its peers' netDb directories. go-i2p does not publish a
+   `router.info` yet, so its node shows no hash and only inferred edges.
+
+The webconsole JSON endpoint (`/jsonrpc`) is **not usable in this build**. It
+was tested directly: `http.api_enabled` is not a recognised option in the
+Alpine 3.22 i2pd 2.56 package (i2pd exits with
+`unrecognised option 'http.api_enabled'`, and its only `http.*` keys are
+address/auth/enabled/hostname/lang/pass/port/strictheaders/user/webroot), and
+POSTing a JSON-RPC envelope to `/jsonrpc` — with and without an
+`Authorization: Basic` header — returns the HTML console page, not JSON. The
+tunnel and peer aggregates the console displays are fetched by its own
+client-side JavaScript from a JSON API this build does not expose, so there is
+no stdlib-only way to obtain them here.
+
+## Why i2pd tunnel and fast/high-capacity counts cannot be filled in
+
+Probed directly against a live router's I2PControl, requesting each property
+individually:
+
+| property | i2pd 2.56 response |
+|---|---|
+| `i2p.router.net.tunnels.participating` | served (number) |
+| `i2p.router.net.tunnels.inbound` / `.outbound` | `{"result":{}}` — absent |
+| `i2p.router.netdb.fastpeers` / `.highcapacitypeers` | `{"result":{}}` — absent |
+| `i2p.router.hash`, `.net.connections`, `.net.bw.burst` | `{"result":{}}` — absent |
+
+An empty result object is i2pd's answer for a property it does not implement;
+no polling cadence or configuration changes it. The dashboard therefore labels
+these `not served by i2pd` instead of showing a dash (which reads like a lost
+measurement) or a zero (which would be false). go-i2p does serve them, but
+cannot be polled until it bootstraps — see the limitation in the README.

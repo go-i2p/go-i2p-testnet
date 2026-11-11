@@ -55,6 +55,7 @@ var (
 	i2pControlPassword string
 	dashPoller         *web.Poller
 	dashServer         *web.Server
+	dashTopology       *dashboard.TopologyService
 	dashCancel         context.CancelFunc
 	dashBindAddr       = "127.0.0.1:8765"
 	dashInsecureTLS    = false
@@ -98,7 +99,25 @@ func startDashboard(cli *client.Client, ctx context.Context, dockerDiscovery boo
 	dashPoller = web.NewPoller(5*time.Second, 5*time.Second, src.Targets)
 	dashPoller.Start(ctx)
 
-	srv, err := web.NewServer(web.ServerConfig{BindAddr: dashBindAddr, Poller: dashPoller})
+	// Topology is rebuilt on its own cadence from live router data, so the
+	// page never blocks on container execs. See dashboard.TopologyService.
+	dashTopology = dashboard.NewTopologyService(cli, dashPoller)
+	dashTopology.Start(ctx)
+
+	srv, err := web.NewServer(web.ServerConfig{
+		BindAddr: dashBindAddr,
+		Poller:   dashPoller,
+		Topology: dashTopology.Graph,
+		// Explain a router we cannot observe from its own captured log, which
+		// is a channel independent of I2PControl. logMgr is nil in standalone
+		// dashboard mode, and Diagnose handles that by saying nothing.
+		Diagnose: func(name string) string {
+			if logMgr == nil {
+				return ""
+			}
+			return logMgr.Diagnose(name)
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -119,6 +138,10 @@ func stopDashboard() {
 	if dashCancel != nil {
 		dashCancel()
 		dashCancel = nil
+	}
+	if dashTopology != nil {
+		dashTopology.Stop()
+		dashTopology = nil
 	}
 	if dashPoller != nil {
 		dashPoller.Stop()
@@ -761,6 +784,15 @@ func main() {
 	i2pControlPassword, err = dashboard.ResolvePassword("logs")
 	if err != nil {
 		log.WithError(err).Fatal("I2PControl password configuration failed")
+	}
+
+	// Routers are configured at "info" because i2pd echoes the I2PControl
+	// password it authenticates with at "debug", and container stdout is
+	// readable by anyone with `docker logs`. The captured files under ./logs
+	// are scrubbed either way; this only warns that the raw log is not.
+	if i2pd.RouterLogLevelIsVerbose() {
+		fmt.Printf("WARNING: i2pd routers run at debug level (%s=debug); i2pd prints the I2PControl password to its own stdout. ./logs/ files are scrubbed, `docker logs` is not.\n", i2pd.EnvRouterLogLevel)
+		log.Warn("router debug logging enabled: I2PControl password will appear in raw container logs")
 	}
 
 	// Standalone dashboard mode: poll the live testnet discovered from

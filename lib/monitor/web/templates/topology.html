@@ -1,0 +1,80 @@
+{{template "head" .}}
+{{template "nav" .NavNote}}
+<h1>Network topology</h1>
+<p class="note">
+  Graph generated <b>{{.GeneratedTxt}}</b> ({{.Age}}) from live router data:
+  transport sessions reported by each router, each router's netDb contents, and
+  each router's own identity hash. Nothing here is a hardcoded peer list.
+</p>
+
+{{if .Graph.Source}}<p class="note">Source: {{.Graph.Source}}</p>{{end}}
+<p class="note">{{.Summary.Text}}</p>
+<div class="legend-svg">{{.LegendSVG}}</div>
+
+{{if .Graph.Warnings}}
+<h2>Warnings</h2>
+<ul>{{range .Graph.Warnings}}<li class="note">{{.}}</li>{{end}}</ul>
+{{end}}
+
+<h2>Graph</h2>
+{{.TopologySVG}}
+
+<h2>Routers</h2>
+<table>
+  <thead><tr>
+    <th>Router</th><th>Impl</th><th>State</th><th>Running</th>
+    <th>Address</th><th class="num">RouterInfos known</th><th class="num">Edges</th>
+  </tr></thead>
+  <tbody>
+  {{range .Routers}}
+    <tr class="{{.Class}}">
+      <td><a href="/router/{{.Name}}">{{.Name}}</a></td>
+      <td>{{.Impl}}</td>
+      <td class="state">{{.State}}</td>
+      <td>{{if .Running}}yes{{else}}no{{end}}</td>
+      <td>{{.IP}}</td>
+      <td class="num">{{.RIs}}</td>
+      <td class="num">{{.Links}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="7">No routers in the roster yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<h2>Edges</h2>
+<table>
+  <thead><tr>
+    <th>From</th><th>To</th><th>Kind</th><th>Matched by</th><th>Transport</th>
+    <th>Peer address</th><th>Peer hash</th><th>Traffic</th><th>Why</th>
+  </tr></thead>
+  <tbody>
+  {{range .Rows}}
+    <tr>
+      <td>{{.From}}</td>
+      <td>{{.To}}</td>
+      <td><span class="badge {{.KindClass}}">{{.Kind}}</span></td>
+      <td>{{.Match}}</td>
+      <td>{{.Transport}}</td>
+      <td>{{.Address}}</td>
+      <td>{{.HashShort}}</td>
+      <td>{{.Bytes}}</td>
+      <td class="note">{{.Reason}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="9">{{if .HasEdges}}edges present{{else}}No edges yet. Edges appear once routers report transport
+      sessions or store each other's RouterInfos — run <code>sync</code> and let the routers
+      find each other.{{end}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<p class="note">
+  <b>observed</b> = the router currently has a transport session to that peer (solid line).
+  <b>inferred</b> = the router stores that peer's RouterInfo in its netDb, so it can build
+  tunnels through it, but no session was seen (dashed line).
+</p>
+
+<footer>Auto-refreshes every {{.RefreshSecs}}s · <a href="/">routers</a></footer>
+</body>
+</html>

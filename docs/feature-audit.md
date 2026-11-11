@@ -42,7 +42,7 @@ Neither stop condition applied:
 | | |
 |---|---|
 | **Status** | **Partial** |
-| **Evidence** | Fields requested: `RequestedProperties` — uptime, version, status, net status, tunnels in/out/participating, bandwidth 1s/15s, known/active/fast/high-capacity peers ([client.go:43-70](../lib/monitor/i2pcontrol/client.go)); decoded onto `Sample` ([client.go:103-121](../lib/monitor/i2pcontrol/client.go), [client.go:515-535](../lib/monitor/i2pcontrol/client.go)); rendered per router ([index.tmpl:33-56](../lib/monitor/web/templates/index.tmpl), [router.tmpl:23-40](../lib/monitor/web/templates/router.tmpl)). Down: assigned on poll failure ([poller.go:213-217](../lib/monitor/web/poller.go)) with the error shown ([index.tmpl:53-55](../lib/monitor/web/templates/index.tmpl)). Stale: `StaleIntervals = 3` and `sweepStale` ([poller.go:30](../lib/monitor/web/poller.go), [poller.go:233-249](../lib/monitor/web/poller.go)), colour classes at [format.go:60-71](../lib/monitor/web/format.go). History: last 60 samples ([poller.go:26](../lib/monitor/web/poller.go), [poller.go:222-225](../lib/monitor/web/poller.go)) rendered newest-first ([router.tmpl:42-56](../lib/monitor/web/templates/router.tmpl)). Behavioural tests: [poller_test.go:81-296](../lib/monitor/web/poller_test.go), [server_test.go:56-137](../lib/monitor/web/server_test.go). |
+| **Evidence** | Fields requested: `RequestedProperties` — uptime, version, status, net status, tunnels in/out/participating, bandwidth 1s/15s, known/active/fast/high-capacity peers ([client.go:43-70](../lib/monitor/i2pcontrol/client.go)); decoded onto `Sample` ([client.go:103-121](../lib/monitor/i2pcontrol/client.go), [client.go:515-535](../lib/monitor/i2pcontrol/client.go)); rendered per router ([index.html:33-56](../lib/monitor/web/templates/index.html), [router.html:23-40](../lib/monitor/web/templates/router.html)). Down: assigned on poll failure ([poller.go:213-217](../lib/monitor/web/poller.go)) with the error shown ([index.html:53-55](../lib/monitor/web/templates/index.html)). Stale: `StaleIntervals = 3` and `sweepStale` ([poller.go:30](../lib/monitor/web/poller.go), [poller.go:233-249](../lib/monitor/web/poller.go)), colour classes at [format.go:60-71](../lib/monitor/web/format.go). History: last 60 samples ([poller.go:26](../lib/monitor/web/poller.go), [poller.go:222-225](../lib/monitor/web/poller.go)) rendered newest-first ([router.html:42-56](../lib/monitor/web/templates/router.html)). Behavioural tests: [poller_test.go:81-296](../lib/monitor/web/poller_test.go), [server_test.go:56-137](../lib/monitor/web/server_test.go). |
 | **Note** | Three real defects, all confirmed live: (a) **go-i2p routers are unobservable**; (b) **i2pd serves no tunnel in/out and no fast/high-capacity peers**, so four of the required fields are permanently empty for every observable router; (c) **the amber `stale` state is effectively unreachable** in live operation. |
 
 **(a) go-i2p: never observable.** On a live 4-router testnet (3x i2pd + 1x go-i2p) started
@@ -104,7 +104,7 @@ reachable end-to-end. **Down: verified live. Stale: Unverified in live operation
 | | |
 |---|---|
 | **Status** | **Partial** |
-| **Evidence** | `Totals()` returns routers/up/down/stale/pending ([poller.go:346-363](../lib/monitor/web/poller.go)); rendered as the summary header ([index.tmpl:26-32](../lib/monitor/web/templates/index.tmpl)) and serialized ([server.go:328-330](../lib/monitor/web/server.go)); test asserts the exact key set ([server_test.go:138-188](../lib/monitor/web/server_test.go)). Live: `{'routers': 4, 'up': 3, 'down': 1, 'stale': 0, 'pending': 0}`, correct against `docker ps`. |
+| **Evidence** | `Totals()` returns routers/up/down/stale/pending ([poller.go:346-363](../lib/monitor/web/poller.go)); rendered as the summary header ([index.html:26-32](../lib/monitor/web/templates/index.html)) and serialized ([server.go:328-330](../lib/monitor/web/server.go)); test asserts the exact key set ([server_test.go:138-188](../lib/monitor/web/server_test.go)). Live: `{'routers': 4, 'up': 3, 'down': 1, 'stale': 0, 'pending': 0}`, correct against `docker ps`. |
 | **Note** | Only *health counts* are aggregated. There are no network totals for peers, tunnels or bandwidth, and no network-level verdict — even though `Snapshot()` ([poller.go:316-325](../lib/monitor/web/poller.go)) already hands every caller the full per-router set. Live `/api/status` top-level keys are exactly `generated_at, refresh_seconds, totals, routers`; `totals` is exactly the five counts. An operator reading "is the network healthy overall?" must sum rows by hand. |
 
 ### 1.3 Graph network state over time
@@ -112,7 +112,7 @@ reachable end-to-end. **Down: verified live. Stale: Unverified in live operation
 | | |
 |---|---|
 | **Status** | **Missing** |
-| **Evidence** | No charting exists anywhere. Repo-wide search of `*.go` and `*.tmpl` (excluding tests) for `topolog|chart|graph|sparkline|svg|polyline|canvas` returns exactly one hit, an unrelated comment ([dashboard.go:3](../lib/monitor/dashboard/dashboard.go)). Live proof against the running server: `curl /` and `curl /router/router-i2pd-1` piped through `grep -ci "svg|canvas|polyline|<img|chart|<script"` -> **0** and **0**; served index is 3216 bytes of pure table markup; templates contain no external assets and no JavaScript. Only two templates exist ([index.tmpl](../lib/monitor/web/templates/index.tmpl), [router.tmpl](../lib/monitor/web/templates/router.tmpl)). |
+| **Evidence** | No charting exists anywhere. Repo-wide search of `*.go` and `*.tmpl` (the template extension at the audited revision; those files are `*.html` now) for `topolog|chart|graph|sparkline|svg|polyline|canvas` returns exactly one hit, an unrelated comment ([dashboard.go:3](../lib/monitor/dashboard/dashboard.go)). Live proof against the running server: `curl /` and `curl /router/router-i2pd-1` piped through `grep -ci "svg|canvas|polyline|<img|chart|<script"` -> **0** and **0**; served index is 3216 bytes of pure table markup; templates contain no external assets and no JavaScript. Only two templates exist ([index.html](../lib/monitor/web/templates/index.html), [router.html](../lib/monitor/web/templates/router.html)). |
 | **Note** | The *underlying data is real, not hardcoded or empty* — which is the good news — but a table is not a graph. Live history for one router: 23 samples with 23 distinct `collected_at` values at 5 s spacing and monotonically increasing `uptime_ms` (14000 -> 256000), rendered as rows (`13:53:36`, `13:53:31`, `13:53:26`, ...). Requirement names peer count, tunnel count and bandwidth trends; none are plotted. Secondary problem: 60 samples x 5 s = a **5-minute window only**, with no persistence ([monitoring-verification.md limitation 5](./monitoring-verification.md)), so even after charts are added no meaningful trend is visible beyond five minutes. |
 
 ### 1.4 See the edges (topology view)
@@ -128,8 +128,8 @@ reachable end-to-end. **Down: verified live. Stale: Unverified in live operation
 | | |
 |---|---|
 | **Status** | **Partial** |
-| **Evidence** | Good: no raw JSON required — human-readable HTML tables, with JSON only at `/api/status` and merely linked from the footer ([index.tmpl:61](../lib/monitor/web/templates/index.tmpl)); consistent units via `formatBytesPerSec` (B/s, KiB/MiB/s — [format.go:9-22](../lib/monitor/web/format.go)), `formatDuration` (`2m 10s` — [format.go:24-40](../lib/monitor/web/format.go)), `formatAgo` (`just now`, `5s ago` — [format.go:42-54](../lib/monitor/web/format.go)); missing values render `—` via `orDash`/`numI64` ([format.go:73-96](../lib/monitor/web/format.go)); sensible sorting by router name in both HTML and JSON ([poller.go:323](../lib/monitor/web/poller.go), [server.go:331](../lib/monitor/web/server.go)) — verified live; labelled columns and a colour-coded header; empty-roster guidance ([index.tmpl:57](../lib/monitor/web/templates/index.tmpl)); 5 s auto-refresh. |
-| **Note** | Readability breaks exactly where data is missing. Live served HTML for the down go-i2p router: `<td>//</td>`, `<td>/</td>`, `<td> / </td>`, and `<dt>Version</dt><dd></dd>` — because `rowFrom`'s nil-sample branch sets **only** `LastSeen` and leaves every other field the empty string ([server.go:144-174](../lib/monitor/web/server.go)), while the templates concatenate the composites unconditionally. Also: the detail page hardcodes `content="5"` instead of using the configured interval ([router.tmpl:5](../lib/monitor/web/templates/router.tmpl) vs [server.go:235](../lib/monitor/web/server.go)); `indexView.Now` is computed and never used ([server.go:213](../lib/monitor/web/server.go), [server.go:236](../lib/monitor/web/server.go)), so the aggregate snapshot has no absolute "as of" stamp on the page; no sortable columns. |
+| **Evidence** | Good: no raw JSON required — human-readable HTML tables, with JSON only at `/api/status` and merely linked from the footer ([index.html:61](../lib/monitor/web/templates/index.html)); consistent units via `formatBytesPerSec` (B/s, KiB/MiB/s — [format.go:9-22](../lib/monitor/web/format.go)), `formatDuration` (`2m 10s` — [format.go:24-40](../lib/monitor/web/format.go)), `formatAgo` (`just now`, `5s ago` — [format.go:42-54](../lib/monitor/web/format.go)); missing values render `—` via `orDash`/`numI64` ([format.go:73-96](../lib/monitor/web/format.go)); sensible sorting by router name in both HTML and JSON ([poller.go:323](../lib/monitor/web/poller.go), [server.go:331](../lib/monitor/web/server.go)) — verified live; labelled columns and a colour-coded header; empty-roster guidance ([index.html:57](../lib/monitor/web/templates/index.html)); 5 s auto-refresh. |
+| **Note** | Readability breaks exactly where data is missing. Live served HTML for the down go-i2p router: `<td>//</td>`, `<td>/</td>`, `<td> / </td>`, and `<dt>Version</dt><dd></dd>` — because `rowFrom`'s nil-sample branch sets **only** `LastSeen` and leaves every other field the empty string ([server.go:144-174](../lib/monitor/web/server.go)), while the templates concatenate the composites unconditionally. Also: the detail page hardcodes `content="5"` instead of using the configured interval ([router.html:5](../lib/monitor/web/templates/router.html) vs [server.go:235](../lib/monitor/web/server.go)); `indexView.Now` is computed and never used ([server.go:213](../lib/monitor/web/server.go), [server.go:236](../lib/monitor/web/server.go)), so the aggregate snapshot has no absolute "as of" stamp on the page; no sortable columns. |
 
 ---
 
@@ -144,7 +144,7 @@ reachable end-to-end. **Down: verified live. Stale: Unverified in live operation
 | Last 60 samples per router in memory | **Implemented** | `HistorySamples = 60` ([poller.go:26](../lib/monitor/web/poller.go)); prepend + truncate ([poller.go:222-225](../lib/monitor/web/poller.go)); copied out for readers ([poller.go:336-344](../lib/monitor/web/poller.go)). | Verified live: three routers' histories grew monotonically and **stopped at exactly 60**. Test: `TestPollerHistoryCapped` ([poller_test.go:243-265](../lib/monitor/web/poller_test.go)). Caveat: in-memory only, so 60 x 5 s = 5 minutes of visible history; a restart clears it. |
 | Bind to 127.0.0.1 by default | **Implemented** | Default `127.0.0.1:8765` in both the server ([server.go:41-44](../lib/monitor/web/server.go)) and the flag ([main.go:734-735](../main.go)). | Verified live: `ss -ltnp` -> `127.0.0.1:8765 users:(("go-i2p-testnet",pid=1602))`. No port published to the router containers either. |
 | Passwords only from env / gitignored files, never logged | **Partial** | `ResolvePassword`: env -> `logs/.i2pcontrol-password` -> generated 0600 file ([dashboard.go:166-195](../lib/monitor/dashboard/dashboard.go)); well-known `itoopie` refused without opt-in ([dashboard.go:197-205](../lib/monitor/dashboard/dashboard.go)); file gitignored (`.gitignore:2,6`, confirmed by `git check-ignore -v`); excluded from all rendering and JSON ([server.go:264-320](../lib/monitor/web/server.go)); RPC errors redacted ([client.go:566-575](../lib/monitor/i2pcontrol/client.go)); captured router logs scrubbed ([logs.go:86-96](../lib/monitor/logs.go), applied at [logs.go:205](../lib/monitor/logs.go), wired at [main.go:787](../main.go)); tests [dashboard_test.go:13-88](../lib/monitor/dashboard/dashboard_test.go), [logs_scrub_test.go:8-37](../lib/monitor/logs_scrub_test.go), [client_test.go:279-294](../lib/monitor/i2pcontrol/client_test.go). | Everything the **tool itself** writes is clean — verified live: 0 matches for the session password in `/`, `/api/status`, `logs/*.log`, and `docker inspect` env/args. **But the requirement is not met at the container boundary**: i2pd runs at `loglevel=debug` ([lib/i2pd/config.go:147](../lib/i2pd/config.go)) and echoes the credential to its own stdout. Reproduced exactly with a probe password: `docker logs router-i2pd-1 | grep -c <PASSWORD>` -> **1**, while the captured file shows `Authenticate API=1 ******`. An operator who inspects `docker logs` sees the cleartext I2PControl password. Fix: set i2pd `loglevel` to `warn`/`info`, or document the exposure as operator-visible rather than claiming "never logged". |
-| Standard library only | **Implemented (as scoped)** | The dashboard added **zero** dependencies: `git diff 4f0648e..HEAD -- go.mod` is empty. `lib/monitor/web` and `lib/monitor/i2pcontrol` import stdlib only (verified per-file: `net/http`, `html/template`, `embed`, `crypto/tls`, ...); no web framework, no database, no CDN, no client-side JS ([index.tmpl](../lib/monitor/web/templates/index.tmpl), [router.tmpl](../lib/monitor/web/templates/router.tmpl)). | Nuance, stated so it is not mistaken for a claim: `lib/monitor/dashboard` and `lib/monitor/logs.go` do import the Docker SDK and logrus, because router discovery and cert retrieval require the Docker API. The README's narrower claim — "stdlib only: no external web server, database, CDN, or frontend framework" ([README.md:139-140](../README.md)) — is accurate. |
+| Standard library only | **Implemented (as scoped)** | The dashboard added **zero** dependencies: `git diff 4f0648e..HEAD -- go.mod` is empty. `lib/monitor/web` and `lib/monitor/i2pcontrol` import stdlib only (verified per-file: `net/http`, `html/template`, `embed`, `crypto/tls`, ...); no web framework, no database, no CDN, no client-side JS ([index.html](../lib/monitor/web/templates/index.html), [router.html](../lib/monitor/web/templates/router.html)). | Nuance, stated so it is not mistaken for a claim: `lib/monitor/dashboard` and `lib/monitor/logs.go` do import the Docker SDK and logrus, because router discovery and cert retrieval require the Docker API. The README's narrower claim — "stdlib only: no external web server, database, CDN, or frontend framework" ([README.md:139-140](../README.md)) — is accurate. |
 | Docs in `docs/monitoring-discovery.md`, `docs/monitoring-verification.md`, README | **Implemented (existence) / inaccurate (content)** | All three exist and are substantive: 167, 184 and 190 lines. README "Status dashboard" section ([README.md:136-179](../README.md)) documents routes, interval, states, pinning, password order and standalone mode. | Existence is fine; **content carries at least ten claims contradicted by the code or by a live run** — see section 4. |
 
 ---
@@ -183,7 +183,7 @@ reachable end-to-end. **Down: verified live. Stale: Unverified in live operation
 9. **Down routers render `//`, `/`, ` / ` and empty `<dd>` instead of `—` (1.5)** —
    `rowFrom`'s nil branch sets only `LastSeen` ([server.go:171-173](../lib/monitor/web/server.go)).
 10. **Detail page hardcodes `refresh content="5"`** instead of `PollInterval`
-    ([router.tmpl:5](../lib/monitor/web/templates/router.tmpl)).
+    ([router.html:5](../lib/monitor/web/templates/router.html)).
 11. **`stale` amber is unreachable in live operation** (1.1c) — a failed poll overwrites it;
     the unit test bypasses the real cycle.
 12. **Dead code**: the eight-function template `FuncMap`
@@ -301,3 +301,77 @@ back — all from a loopback-only page that adds no dependencies and leaks no cr
 its own output. You cannot see trends as graphs, you cannot see who is connected to whom, you
 cannot read network-wide totals, and you cannot see the go-i2p router at all. Two of the five
 operator capabilities are missing outright, so the repo is **not feature-complete**.
+
+---
+
+## 7. Status after implementation (this section supersedes nothing above; it records what changed)
+
+The verdict and every table above describe commit `f4d8710` and still stand as a
+description of that revision. The gaps in section 3 were subsequently implemented;
+this section states what is now true, what was verified live, and what the audit
+found **cannot** be fixed in this repo.
+
+Verified on a fresh 4-router testnet (3 i2pd + 1 go-i2p) built from the current tree,
+2026-11-10 19:24-19:35 EST.
+
+| Gap (section 3) | Status now | Evidence | Verified live |
+|---|---|---|---|
+| 1. No topology/edges view | **Implemented** | `lib/monitor/topology/topology.go` (model, `Build`, observed/inferred kinds, match=hash/ip/netdb/external); `lib/monitor/dashboard/collector.go` (sessions from i2pd's transports page, peer hashes from each netDb, own hash from `router.info`); `lib/monitor/dashboard/topology_service.go` (background refresh, `TopologyRefresh = 10s`, `collectionTimeout = 8s`); routes at [server.go:175](../lib/monitor/web/server.go) `/topology` and `/api/topology`; SVG + edge table in `lib/monitor/web/topology_view.go` + `templates/topology.html` | Yes: 4 nodes, 9 edges — **6 observed** (all `match=hash`, transports NTCP2/SSU2, with per-edge byte counters) and **3 inferred** (netDb). Page prints `Graph generated 2026-11-10 19:32:18 EST` and `6 observed · 3 inferred · 6 matched by router hash`. Nothing about adjacency is hardcoded. |
+| 2. No charts | **Implemented** | `lib/monitor/web/chart.go` (stdlib SVG renderer, `niceScale` integer axes, gaps drawn as dots, explicit escaping), `lib/monitor/web/charts.go` (`routerCharts`, `networkCharts` built from real history), rendered in `templates/index.html` + `templates/router.html` | Yes: index shows 3 network charts (peers/tunnels/bandwidth) with 5 polylines total, y axes `0,5,10` and `0,50,100,150` (integral, because peer counts are integers), bandwidth axis in `KiB/s`, x labels wall-clock `19:24:28 / 19:25:58 / 19:26:48`. Each router page shows its own 3 charts. |
+| 3. go-i2p unobservable | **Partially fixed — root cause is upstream** | `(go-i2p) router is bootstrapping: it refuses to start its control interface until it has the minimum number of peers (the log names that floor)` — `LogManager.Diagnose` ([logs.go:355](../lib/monitor/logs.go)) reads the router's own log tail and classifies, never echoing log content; failure class `not-serving` from `classifyFailure` ([poller.go:229](../lib/monitor/web/poller.go)) | Yes: `router-goi2p-4` returns `state=down`, `failure_reason=not-serving` and the router page says why instead of showing a bare red cell. **It also now appears in the topology** with 3 netDb-derived edges and `RouterInfos known = 3`. The control interface itself still does not listen: `--bootstrap.low-peer-threshold 1` and `--bootstrap.minimum-reseed-peers 1` were both probed and neither changes `threshold=40`, so this is not configurable from here. |
+| 4. i2pd serves no tunnels in/out, fast/high-capacity peers | **Cannot be implemented — now labelled honestly** | `notServed` map ([charts.go:19](../lib/monitor/web/charts.go)) + `notServedText`; API field `not_served_by_implementation` | Yes: i2pd 2.56 answers those four properties with `{"result":{}}` (probed directly, so no polling cadence and no alternate I2PControl source can produce a value). The detail page now reads `not served by i2pd` in place of four dashes, the compact table reads `n/a`, and the page explains that this means the property is not exposed at all — not a missing measurement and not a zero. |
+| 5. Cleartext password in `docker logs` | **Fixed at the source** | routers default to `loglevel = info` because i2pd prints `I2PControl: Authenticate API=1 <password>` at debug ([config.go:139-164](../lib/i2pd/config.go)); opt-in `TESTNET_I2PD_LOGLEVEL=debug` prints a warning at startup ([main.go](../main.go)); `RedactConfigPassword` exported and now actually tested ([config_test.go](../lib/i2pd/config_test.go)); `./logs/` scrubbing retained as defence in depth | Yes: `grep -Fc "$password"` over `docker logs` for all 3 i2pd containers, all 4 `logs/*.log` files, `/`, `/topology`, `/api/status`, `/api/topology`, and `docker inspect` env+args → **0 matches everywhere** (was 1 in `docker logs` at the audited revision). |
+| 6. No aggregate network totals | **Implemented** | `NetworkTotals` + `recordNetworkHistory` / `NetworkHistory` / `aggregateLocked` ([poller.go](../lib/monitor/web/poller.go)); aggregation ignores samples older than `StaleIntervals`, so a stale router stops contributing | Yes: `network: {routers 4, up 3, known_peers 9, active_peers 6, tunnels_participating 378, …}`. Pausing `router-i2pd-1` moved it to `known_peers 6 / active_peers 4 / tunnels_participating 245`, and unpausing restored it (421). |
+| 7. 5-minute window, no persistence | **Unchanged** | History is still capped at 60 in-memory samples; the effective window is now stated on the page (`window()` in [charts.go](../lib/monitor/web/charts.go)) and as `history_max_samples` in the API | Not attempted: persistence would need storage outside the stdlib-only scope. The charts say `5 minute window` rather than letting the x axis be the only clue. |
+| 8. `RoutersFromDocker` untested | **Implemented** | `SelectRouters` + `RouterImpl` extracted for testability; `discovery_test.go` | Yes (unit): name→implementation mapping, container-id/IP propagation, and the standalone path are covered without a daemon. |
+| 9. Down routers render `//`, `/`, ` / `, empty `<dd>` | **Fixed** | `rowFrom(st, compact)` ([server.go](../lib/monitor/web/server.go)) fills every cell in the nil branch | Yes: `grep` for `<td>\s*[/ ]+\s*</td>` in the served index and router pages → 0 matches; a down router renders `—` (or `n/a`). |
+| 10. Hardcoded `refresh content="5"` | **Fixed** | `templates/base.html` uses `{{.RefreshSecs}}` from `PollInterval` | Yes: `content="5"` appears because the configured interval *is* 5s; it now tracks the config. |
+| 11. `stale` unreachable | **Fixed** | `applyUnhealthy` keeps amber while the last sample is within `StaleIntervals × interval` ([poller.go](../lib/monitor/web/poller.go)) | Yes: `docker pause router-i2pd-3` → at ~16s `totals {up 2, down 1, stale 1}` with `state=stale failure_reason=timeout`; past the window → `down`. `docker unpause` → `up`. |
+| 12. Dead code | **Removed** | `orDash`, `numF64`, `numPtr`, `Adjacency`, `Chart.Subtitle`, the entire unused template `FuncMap`, and the fake `mapLines` redaction test | Yes: `gofmt`/`go vet` clean; the redaction test now calls the production `RedactConfigPassword`. |
+| 13. No sortable columns, no absolute "as of" | **Implemented** | server-side sort by `?sort=&dir=` gated by `durationShape`/`parseDurationDisplay` so `2m 10s` cannot sort as 2; nav snapshot stamp + footer `snapshot 2026-11-10 19:26:49 EST` ([server.go:633](../lib/monitor/web/server.go)) | Yes: 9 sortable columns (name, impl, state, version, uptime, tunnels, peers, bw, seen). Text such as `not served by i2pd` sorts as missing, never as a fake 0. |
+| 14. `sync` restarts every i2pd router | **Unchanged, now labelled** | transient red flips during `sync` are expected; the state machine distinguishes `not-serving`/`unreachable`/`timeout` so a restart is visibly different from a crash | Partially: reasons were verified live for pause/stop; no separate `sync` run was performed for this section. |
+
+### Also fixed while implementing (found by testing, not by the audit)
+
+- A series whose only value sits between gaps drew nothing at all; gaps are now
+  rendered as dots so a single reported value is still visible.
+- A chart with exactly one sample said `no router reported this value`, which is
+  false when a router did report one. The placeholder now distinguishes
+  `only one sample collected so far — a trend needs two` from
+  `no router reported this value`.
+- `edgeSummary` was defined as `Summary.text()`; templates cannot call unexported
+  methods, so the totals line silently rendered empty. Renamed to `Text()`.
+- `html/template` escapes `&` inside an interpolated query string, so sort links
+  came out as `?sort=x%26dir%3dasc`. The `&amp;` is now literal in the template.
+
+### What is still true, stated plainly
+
+1. **go-i2p remains unobservable over I2PControl.** Its peer floor is upstream and
+   not configurable; the dashboard can now explain that and show the router's
+   netDb-derived edges, but it cannot make the control endpoint listen.
+2. **Four required fields are permanently absent for i2pd.** They are labelled, not
+   filled. Anyone claiming to have "fixed" this by polling harder would be wrong.
+3. **No persistence.** Restarting the dashboard clears history; the window is
+   60 samples by design.
+4. **Scale beyond 4 routers is unverified.** The 53-router figures in
+   `docs/monitoring-verification.md` were taken on trust here, as section 4 item 9
+   said; everything in this section was verified at 4-router scale.
+5. **Topology edges stop at what routers actually report.** Sessions come from
+   i2pd's own transport table and peer hashes from each router's own netDb, so an
+   edge that no router records is not drawn — and a stopped router's edges are
+   demoted to `inferred` with the warning `router-i2pd-3 is not running, so its
+   sessions are not in this graph` rather than silently disappearing.
+
+### Test and doc state after implementation
+
+`go build ./...`, `go vet ./...`, `gofmt -l .` and `go test -count=1 ./...` are clean
+(including `-race` for `./lib/monitor/...`). Coverage: `topology` 87.7%, `web` 82.4%.
+New test files: `topology_test.go`, `chart_test.go`, `routes_test.go`, `sort_test.go`,
+`collector_test.go`, `discovery_test.go`, `topology_service_test.go`, `config_test.go`.
+`go.mod`/`go.sum` are untouched, so the dashboard remains stdlib-only; the Docker SDK
+is used only for discovery and container-side collection, as before.
+
+The 10 documentation contradictions in section 4 were corrected in
+`README.md`, `docs/monitoring-discovery.md` and `docs/monitoring-verification.md`,
+and template files were renamed `*.tmpl` → `*.html` (the extension in the links above
+refers to the audited revision).

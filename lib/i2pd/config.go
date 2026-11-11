@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -135,6 +136,35 @@ type NettimeConfig struct {
 	NtpSyncInterval int    `ini:"ntpsyncinterval"`
 }
 
+// EnvRouterLogLevel opts a router back in to verbose logging.
+const EnvRouterLogLevel = "TESTNET_I2PD_LOGLEVEL"
+
+// defaultRouterLogLevel is what routers run at. "info" is deliberate: i2pd
+// prints the I2PControl password it was authenticated with at "debug", and
+// container stdout is visible to anyone who can run `docker logs`.
+const defaultRouterLogLevel = "info"
+
+// RouterLogLevel returns the log level to configure routers at, honouring the
+// operator override. Anything unrecognised falls back to the safe default,
+// because i2pd exits fatally on an invalid loglevel and a typo should not stop
+// the testnet.
+func RouterLogLevel() string {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(EnvRouterLogLevel)))
+	switch v {
+	case "debug", "info", "warn", "error":
+		return v
+	default:
+		return defaultRouterLogLevel
+	}
+}
+
+// RouterLogLevelIsVerbose reports whether routers are running at debug level,
+// so the caller can warn the operator that credentials will appear in raw
+// container logs.
+func RouterLogLevelIsVerbose() bool {
+	return RouterLogLevel() == "debug"
+}
+
 func GenerateDefaultI2PDConfig() *I2PDConfig {
 	return &I2PDConfig{
 		// Global options (before any section)
@@ -144,22 +174,28 @@ func GenerateDefaultI2PDConfig() *I2PDConfig {
 		Pidfile:     "/run/i2pd.pid",
 		Log:         "stdout",
 		Logfile:     "",
-		Loglevel:    "debug",
-		Logclftime:  false,
-		Daemon:      false,
-		Family:      "",
-		Host:        "",
-		Port:        4567,
-		IPv4:        true,
-		IPv6:        false,
-		Bandwidth:   "L",
-		Share:       100,
-		Notransit:   false,
-		Floodfill:   true,
-		Service:     false,
-		Datadir:     I2PDDataDir,
-		Netid:       2,
-		Nat:         true,
+		// info, not debug: at debug level i2pd echoes the I2PControl
+		// password it was handed on Authenticate ("I2PControl: Authenticate
+		// API=1 <password>"), and that reaches `docker logs` in cleartext.
+		// The dashboard's captured files scrub it, but the raw container log
+		// is outside our control. Set TESTNET_I2PD_LOGLEVEL=debug to opt back
+		// in when debugging a router; the testnet warns when you do.
+		Loglevel:   RouterLogLevel(),
+		Logclftime: false,
+		Daemon:     false,
+		Family:     "",
+		Host:       "",
+		Port:       4567,
+		IPv4:       true,
+		IPv6:       false,
+		Bandwidth:  "L",
+		Share:      100,
+		Notransit:  false,
+		Floodfill:  true,
+		Service:    false,
+		Datadir:    I2PDDataDir,
+		Netid:      2,
+		Nat:        true,
 
 		// NTCP2 section
 		NTCP2: NTCP2Config{
@@ -280,16 +316,17 @@ func GenerateRouterConfig(routerID int, ip, i2pControlPassword string) (string, 
 	// The config contains the I2PControl password; never log it verbatim.
 	log.WithFields(map[string]interface{}{
 		"routerID": routerID,
-		"config":   redactConfigPassword(configData),
+		"config":   RedactConfigPassword(configData),
 	}).Debug("i2pd router configuration generated successfully")
 
 	return configData, nil
 }
 
-// redactConfigPassword masks password values in config text so generated
+// RedactConfigPassword masks password values in config text so generated
 // configs can be logged for debugging without leaking the I2PControl
-// password.
-func redactConfigPassword(configData string) string {
+// password. Exported so the behaviour is testable against the real generator
+// rather than a re-implementation in a test file.
+func RedactConfigPassword(configData string) string {
 	lines := strings.Split(configData, "\n")
 	for i, line := range lines {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(line)), "password") {

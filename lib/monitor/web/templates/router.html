@@ -1,30 +1,29 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="5">
-<title>{{.Name}} — testnet dashboard</title>
-<style>
-body { font-family: system-ui, sans-serif; margin: 1.5rem; background:#101418; color:#d8dee4; }
-h1 { font-size: 1.2rem; }
-.kv { display:grid; grid-template-columns: 14rem 1fr; gap:.2rem .8rem; margin:1rem 0; }
-.kv dt { color:#8b949e; } .kv dd { margin:0; }
-table { border-collapse: collapse; margin-top:1rem; }
-th, td { padding:.3rem .6rem; border-bottom:1px solid #2d333b; text-align:left; font-size:.85rem; white-space:nowrap; }
-th { color:#8b949e; }
-.ok { color:#3fb950; } .down { color:#f85149; } .stale { color:#d29922; } .pending { color:#8b949e; }
-.err { color:#f85149; }
-a { color:#58a6ff; text-decoration:none; }
-</style>
-</head>
-<body>
+{{template "head" .}}
+{{template "nav" .NavNote}}
 <p><a href="/">← all routers</a></p>
 <h1>{{.Name}} <span class="{{.StateClass}}">[{{.State}}]</span></h1>
+<p class="note">Snapshot {{.NowText}} · {{.Samples}} samples held · {{.ChartWindow}} of history.</p>
+
+<h2>Trends</h2>
+<div class="charts">
+  {{range .Charts}}
+  <div class="chart-box">
+    <h3>{{.Title}}</h3>
+    {{.SVG}}
+  </div>
+  {{end}}
+  {{if not .Charts}}
+  <div class="chart-empty">No samples collected for this router yet.</div>
+  {{end}}
+</div>
+
+<h2>Current state</h2>
 <dl class="kv">
   <dt>Implementation</dt><dd>{{.Impl}}</dd>
   <dt>I2PControl URL</dt><dd>{{.URL}}</dd>
   <dt>Last seen</dt><dd>{{.LastSeen}}</dd>
-  {{if .LastError}}<dt>Last error</dt><dd class="err">{{.LastError}}</dd>{{end}}
+  {{if .LastError}}<dt>Last error</dt><dd class="err">{{if .Failure}}[{{.Failure}}{{if gt .Failures 1}}, {{.Failures}} in a row{{end}}] {{end}}{{.LastError}}</dd>{{end}}
+  {{if .Diagnosis}}<dt>Why</dt><dd>{{.Diagnosis}}</dd>{{end}}
   <dt>Version</dt><dd>{{.Version}}</dd>
   <dt>Status</dt><dd>{{.Status}}</dd>
   <dt>Net status</dt><dd>{{.NetStatusName}}</dd>
@@ -39,7 +38,10 @@ a { color:#58a6ff; text-decoration:none; }
   <dt>BW in 1s / 15s</dt><dd>{{.BWIn1s}} / {{.BWIn15s}}</dd>
   <dt>BW out 1s / 15s</dt><dd>{{.BWOut1s}} / {{.BWOut15s}}</dd>
 </dl>
-<h2>Last {{len .History}} samples (newest first)</h2>
+<p class="note">"not served by …" means this router's implementation does not expose that
+property over I2PControl at all — it is not a missing measurement or a zero.</p>
+
+<h2>Last {{.Samples}} samples (newest first)</h2>
 <table>
   <thead><tr><th>Time</th><th>Uptime</th><th>Tun in/out/part</th><th>Peers known/active</th><th>BW in/out 1s</th></tr></thead>
   <tbody>
@@ -47,8 +49,8 @@ a { color:#58a6ff; text-decoration:none; }
     <tr>
       <td>{{.Time}}</td>
       <td>{{.Uptime}}</td>
-      <td>{{.TunIn}}/{{.TunOut}}/{{.TunPart}}</td>
-      <td>{{.KnownPeers}}/{{.ActivePeers}}</td>
+      <td>{{.TunIn}} / {{.TunOut}} / {{.TunPart}}</td>
+      <td>{{.KnownPeers}} / {{.ActivePeers}}</td>
       <td>{{.BWIn1s}} / {{.BWOut1s}}</td>
     </tr>
   {{else}}
@@ -56,5 +58,7 @@ a { color:#58a6ff; text-decoration:none; }
   {{end}}
   </tbody>
 </table>
+
+<footer>Auto-refreshes every {{.RefreshSecs}}s · <a href="/topology">topology</a></footer>
 </body>
 </html>

@@ -47,6 +47,62 @@ Unit coverage:
   0600 file), default `itoopie` refused without opt-in and accepted with
   it; per-implementation target URLs (https+pinned for i2pd, http for
   go-i2p); IP-less routers skipped.
+- **Topology model** (`lib/monitor/topology`): observed edge matched by peer
+  hash prefix; an ambiguous prefix is never guessed (falls back to address,
+  then to an external node); match by address; inferred edge from netDb
+  membership; observed always dedupes inferred in both arrival orders; a
+  router's own RouterInfo produces no self-edge; unmatchable sessions warn
+  rather than vanish; hash match needs no address; `generated_at` recorded
+  and defaulted; identical inputs give an identical graph over 25 runs;
+  degree counts kinds; empty roster is not an error.
+- **Topology collection** (`collector_test.go`): session rows parsed from a
+  real i2pd transports page including the `&#8658;` entity and per-section
+  transport name; multi-transport pages; nine kinds of malformed or
+  non-session line ignored, while a session to a non-testnet peer still
+  parses; netDb listing parsed from paths or bare names, deduped, rejecting
+  directory rows and shell noise; `router.info` parsed to the ident hash that
+  the router's own netDb file name uses (fixture captured from a live
+  router), accepting both binary and base64 forms, and rejecting junk.
+- **Discovery** (`discovery_test.go`): container list filtered to `router-*`
+  on the testnet network, unrelated containers ignored, unaddressed or
+  unattached routers skipped, missing network settings tolerated,
+  implementation classified by name then image, container id and IP threaded
+  into poller targets.
+- **State machine** (`poller_test.go`): driven through real poll cycles —
+  a router that stops answering goes `stale` while its last sample is still
+  recent (sample retained, failure classified, history not extended by
+  failures), then `down` once the data ages out; `not-serving` for
+  connection refused; failure counts and reason cleared on recovery;
+  classification table for refused/timeout/auth/protocol/internal/unreachable;
+  network totals summed, nil when nothing reports the field, ignoring
+  hour-old samples; network history recorded and capped at 60.
+- **Charts** (`chart_test.go`): SVG contains polylines built from samples;
+  different data produces different geometry and a rising series plots
+  upward; a value no router reports renders as an explanatory gap, never a
+  fabricated zero line; a single sample explains itself; axis scale fits the
+  data and stays integral for integer metrics; router-controlled titles and
+  labels are escaped; all-zero data still renders.
+- **Routes and rendering** (`routes_test.go`, `sort_test.go`): `/topology`
+  renders nodes, both edge kinds, transport, peer address, generation time
+  and an SVG; `/api/topology` shape and per-edge `match`; no credentials in
+  either payload; topology unavailable explains itself with 503; index shows
+  summed network totals and charts; detail page charts and
+  "not served by i2pd" labelling; down routers render no broken cells and
+  show reason plus failure streak; sorting puts trouble first, orders
+  uptime/peers correctly, falls back to name for unknown columns, and marks
+  the active column; `parseDurationDisplay` distinguishes "2m 10s" (130)
+  from "45s" and refuses to turn an explanation into a number.
+- **Config generation** (`lib/i2pd/config_test.go`): the real generator
+  embeds the password i2pd needs and enables `[i2pcontrol]` on the container
+  IP, while the redaction applied before logging removes it and leaves the
+  rest intact; routers default to `loglevel=info`, honour
+  `TESTNET_I2PD_LOGLEVEL`, and reject an invalid value by falling back
+  rather than letting i2pd exit on it.
+- **Log-derived diagnosis** (`logs_scrub_test.go`): a router stuck below the
+  peer floor is explained from its own captured log, as is a missing netDb;
+  healthy, unrelated, missing or unreadable logs produce no claim; only the
+  recent tail is read; and the explanation is rule text that can never echo
+  log content, so a secret in a log line cannot reach the page.
 - **Log scrubbing**: registered secrets are replaced with `[REDACTED]` in
   captured lines; clean lines untouched.
 
@@ -85,8 +141,12 @@ go-i2p-testnet» sync
   pinned HTTPS; go-i2p `down` with a connection error — **expected** per
   the README (go-i2p crash-loops until the first `sync` publishes
   RouterInfos; the retry loop keeps the container alive).
-- After `sync`: all routers `up`; peer counts became non-zero
-  (`known_peers` 1→…), proving live data flows through the dashboard.
+- After `sync`: the i2pd routers were `up` and peer counts became non-zero
+  (`known_peers` 1→…), proving live data flows through the dashboard. The
+  go-i2p router stayed `down` even after `sync` on a 4-router net, because
+  the shared netDb held 3 RouterInfos against its 40-peer floor — see
+  limitation 1. An earlier version of this document claimed all routers came
+  up at this scale; that was only true once enough routers existed.
 
 ## 4. End-to-end run (scale, 53 routers)
 
@@ -158,14 +218,102 @@ With no testnet running it serves an empty roster (routers: 0) and
 `/`; against the live testnet it discovered all 53 containers from the
 Docker topology with no hardcoding.
 
+## 8. Graphs, network totals and topology (added after the feature audit)
+
+The audit found charts and the topology view entirely absent, and network
+totals limited to health counts. All three are now implemented and were
+verified against a live 4-router testnet (3x i2pd + 1x go-i2p).
+
+**Routes.** `/`, `/healthz`, `/api/status`, `/topology` and `/api/topology`
+all returned 200 against the running server.
+
+**Charts are drawn from real samples.** `/api/status` history for one router
+held 23 samples with 23 distinct `collected_at` values at 5 s spacing and a
+monotonically increasing `uptime_ms` (14000 -> 256000). The index page rendered
+5 chart boxes containing 5 `<polyline>` elements; the router detail page
+rendered 5 polylines from its own history. Axis labels are integral for integer
+metrics (`0/5/10/50/100/150`, `9.8 KiB/s/19.5 KiB/s/29.3 KiB/s`) rather than
+the fractional values a naive scale produces.
+
+**Network totals.** `/api/status` `network` object with all routers up:
+
+```json
+{"routers": 4, "up": 3, "known_peers": 9, "active_peers": 6,
+ "tunnels_participating": 435, "bw_inbound_1s": 124, "bw_outbound_1s": 123}
+```
+
+After stopping one router the sums fell to `known_peers: 6, active_peers: 3`,
+confirming the aggregate tracks the roster rather than being frozen. Fields no
+router reports stay absent instead of becoming a fabricated zero.
+
+**Topology, live graph with observed edges.** After `sync` and enough settle
+time the graph reported 6 observed and 3 inferred edges:
+
+```text
+router-i2pd-1 -> router-i2pd-2 | observed | hash | SSU2  | rx 41457
+router-i2pd-2 -> router-i2pd-3 | observed | hash | NTCP2 | rx 15576
+router-goi2p-4 -> router-i2pd-1 | inferred | netdb
+```
+
+Every observed edge matched its peer **by ident hash**, not by address guess:
+the hash prefixes come from each i2pd router's own transport table, and each
+node's hash was derived by parsing that router's `router.info`. The page shows
+the generation time (`Graph generated 2026-11-10 18:44:38 EST (just now)`),
+solid lines for observed and dashed for inferred, and 4 nodes / 11 edges in the
+SVG. `warnings` was empty when all routers were reachable.
+
+**Disruption.** `docker stop router-i2pd-1` produced, within about 30 s:
+
+- status: `down`, reason `timeout`, last 42 samples retained (history is not
+  truncated by a failure);
+- topology: `running=False`, the 4 edges that had been observed from that
+  router correctly **demoted to inferred** (its peers still store its
+  RouterInfo, but no session can exist), and the warning
+  `router-i2pd-1 is not running, so its sessions are not in this graph`.
+
+`docker start` restored `up`, cleared `failure_reason` and the consecutive
+failure count, and returned the graph to 6 observed / 3 inferred edges.
+
+**Stale is now reachable.** The audit found the amber state unobservable in
+live operation because any failure jumped straight to red. `docker pause
+router-i2pd-2` now produces the intended progression, one poll interval apart:
+
+```text
+t+6s  up    -> stale  (reason timeout, last sample still shown)
+t+30s stale -> down    (sample aged past the window)
+```
+
+**Unobservable router explained.** `router-goi2p-4` shows `down` with reason
+`not-serving`, and both the index row and its detail page carry a plain-language
+diagnosis derived from the router's own captured log:
+
+```text
+Why: the router is still bootstrapping: it refuses to start its control
+interface until it has the minimum number of peers (the log names that floor).
+Publish RouterInfos to it with `sync`, or add enough routers, then it will come up.
+```
+
+**Credential handling re-verified with the new log level.** With a known probe
+password, `docker logs <router>` produced **0** matches for all three i2pd
+routers (the audit reproduced 1 match at debug level), and `/`, `/api/status`,
+`/topology`, `/api/topology` and `logs/*.log` all produced 0 matches. The
+generated config now carries `loglevel = info`.
+
+**Standalone mode.** `./bin/go-i2p-testnet -dashboard -dashboard-addr
+127.0.0.1:8899` discovered all 4 containers from the Docker topology with no
+in-memory roster and served the same topology graph (4 nodes, 6 observed / 3
+inferred edges, hashes derived for the three i2pd routers).
+
 ## Known limitations / open questions
 
-1. **go-i2p bootstrap floor**: upstream go-i2p hardcodes
-   `emergencyReseedFloor = 40` — a testnet with fewer than 40 RouterInfos
-   in the shared netDb makes go-i2p exit before I2PControl starts, so it
-   shows red until enough routers exist or the first `sync` lands. The
-   dashboard reports this faithfully; fixing go-i2p itself is out of
-   scope here.
+1. **go-i2p bootstrap floor**: upstream go-i2p requires 40 RouterInfos
+   before it starts its I2PControl server. Confirmed not configurable:
+   `--bootstrap.low-peer-threshold 1` and `--bootstrap.minimum-reseed-peers 1`
+   both still log `threshold=40`, and after 5 attempts the process exits
+   (`EXIT=1`) and the container's retry loop restarts it, so nothing ever
+   listens on 7650 below that floor. A small testnet therefore shows the
+   go-i2p router as `down` / `not-serving` with no metrics, now accompanied by
+   the log-derived explanation above. Fixing the floor belongs to go-i2p.
 2. **go-i2p I2PControl over cleartext HTTP** on the internal bridge
    (go-i2p has no TLS cert generation for I2PControl; the explicit
    `allow_plaintext_non_loopback: true` in its config is the required
@@ -176,9 +324,11 @@ Docker topology with no hardcoding.
    `exit` command (or EOF) actually cleans up. The dashboard follows the
    same lifecycle (`stop`/`exit` shut it down). Not changed here.
 4. **i2pd logs the I2PControl password at debug level** on authenticate.
-   We scrub it from captured logs, but the router's own stdout still
-   contains it inside the container; consider `loglevel = warn` for
-   i2pd routers in future if that's a concern.
+   Addressed at the source: routers are configured at `loglevel = info` by
+   default, so the credential no longer reaches container stdout at all
+   (verified: 0 matches in `docker logs`). Captured files remain scrubbed, and
+   `TESTNET_I2PD_LOGLEVEL=debug` still opts back in for debugging, with a
+   startup warning that the password will appear in raw container logs.
 5. Dashboard history is per-process in memory (by design): restarting the
    CLI clears it; `stop` also removes routers from the roster since the
    router list is the testnet's state.

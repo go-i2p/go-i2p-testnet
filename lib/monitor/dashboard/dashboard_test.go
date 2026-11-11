@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"go-i2p-testnet/lib/monitor/web"
@@ -113,32 +112,10 @@ func TestTargetsSkipIPless(t *testing.T) {
 	}
 }
 
-// TestGeneratedConfigsCarryPassword guards the config generators used at
-// "add": the I2PControl section must exist and the redaction helper must
-// work on their output.
-func TestI2PDConfigRedaction(t *testing.T) {
-	in := "[i2pcontrol]\nenabled=true\npassword=supersecret\n[reseed]\n"
-	out := strings.Join(mapLines(in), "")
-	if strings.Contains(out, "supersecret") {
-		t.Errorf("redaction failed: %s", out)
-	}
-	if !strings.Contains(out, "password= [redacted]") {
-		t.Errorf("unexpected redaction output: %s", out)
-	}
-}
-
-func mapLines(in string) []string {
-	var res []string
-	for _, line := range strings.Split(in, "\n") {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(line)), "password") {
-			if eq := strings.Index(line, "="); eq >= 0 {
-				line = line[:eq+1] + " [redacted]"
-			}
-		}
-		res = append(res, line)
-	}
-	return res
-}
+// TestGeneratedConfigsCarryPassword is covered for real in lib/i2pd, where the
+// generator lives. It used to live here as a test-local re-implementation of
+// the masking helper, which meant a regression in production code still passed.
+// The compile-time assertion below is what this package actually owns.
 
 // Compile-time assertion that Source.Targets matches web.SourceFunc.
 var _ web.SourceFunc = (&Source{}).Targets

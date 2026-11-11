@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go-i2p-testnet/lib/monitor/i2pcontrol"
 )
 
 // mockRouter is a fake I2PControl endpoint used by poller tests.
@@ -292,5 +295,230 @@ func TestStaleRendersAmberClass(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `class="stale"`) {
 		t.Error("stale router must render amber class")
+	}
+}
+
+// --- state machine: the audit found "stale" unreachable in live operation
+// and every failure reported identically as "down". These drive real poll
+// cycles against mock routers, not the sweep in isolation.
+
+// TestStaleIsReachableThroughRealCycles: a router that answers and then stops
+// answering must go amber first (last good data still on screen), not straight
+// to red.
+func TestStaleIsReachableThroughRealCycles(t *testing.T) {
+	r := newMockRouter(t)
+	p := NewPoller(40*time.Millisecond, 200*time.Millisecond, func(context.Context) []Target {
+		return []Target{{Name: "flaky", Impl: "i2pd", URL: r.srv.URL, Password: "p"}}
+	})
+	ctx := context.Background()
+
+	waitFor(t, 2*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("flaky")
+		return st != nil && st.State == StateUp
+	})
+
+	// Kill it: the next failure must land on stale, keeping the last sample.
+	r.set(false)
+	waitFor(t, 3*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("flaky")
+		return st != nil && st.State == StateStale
+	})
+	st, _ := p.Get("flaky")
+	if st.State != StateStale {
+		t.Fatalf("state = %s, want stale; error=%s", st.State, st.LastError)
+	}
+	if st.Sample == nil {
+		t.Error("stale router must keep showing its last good sample")
+	}
+	if st.LastError == "" {
+		t.Error("stale router must still carry the failure")
+	}
+	if st.FailureReason == ReasonNone {
+		t.Error("stale router must classify why it is failing")
+	}
+	// History must not be extended by failed polls.
+	before := len(st.History)
+	p.DispatchNow(ctx)
+	if after, _ := p.Get("flaky"); len(after.History) > before {
+		t.Error("a failed poll must not add a sample to history")
+	}
+}
+
+// TestDownAfterSustainedFailure: amber is a grace period, not a hiding place.
+// Once the last good data ages past the window the router must read red.
+func TestDownAfterSustainedFailure(t *testing.T) {
+	r := newMockRouter(t)
+	p := NewPoller(20*time.Millisecond, 150*time.Millisecond, func(context.Context) []Target {
+		return []Target{{Name: "dies", Impl: "i2pd", URL: r.srv.URL, Password: "p"}}
+	})
+	ctx := context.Background()
+	waitFor(t, 2*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("dies")
+		return st != nil && st.State == StateUp
+	})
+	r.srv.Close() // nothing listening: connection refused
+
+	waitFor(t, 5*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("dies")
+		return st != nil && st.State == StateDown
+	})
+	st, _ := p.Get("dies")
+	if st.State != StateDown {
+		t.Fatalf("state = %s, want down after sustained failure", st.State)
+	}
+	if st.FailureReason != ReasonNotServing {
+		t.Errorf("reason = %q, want %q for connection refused", st.FailureReason, ReasonNotServing)
+	}
+	if st.Failures < 2 {
+		t.Errorf("failures = %d, want the consecutive count to be tracked", st.Failures)
+	}
+}
+
+// TestRecoveryClearsFailureState closes the loop: stale/down must be able to
+// return to up with the failure bookkeeping wiped.
+func TestRecoveryClearsFailureState(t *testing.T) {
+	r := newMockRouter(t)
+	p := NewPoller(20*time.Millisecond, 150*time.Millisecond, func(context.Context) []Target {
+		return []Target{{Name: "back", Impl: "i2pd", URL: r.srv.URL, Password: "p"}}
+	})
+	ctx := context.Background()
+	waitFor(t, 2*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("back")
+		return st != nil && st.State == StateUp
+	})
+	r.set(false)
+	waitFor(t, 3*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("back")
+		return st != nil && st.State != StateUp
+	})
+	r.set(true)
+	waitFor(t, 3*time.Second, func() bool {
+		p.DispatchNow(ctx)
+		st, _ := p.Get("back")
+		return st != nil && st.State == StateUp
+	})
+	st, _ := p.Get("back")
+	if st.FailureReason != ReasonNone || st.Failures != 0 || st.LastError != "" {
+		t.Errorf("recovered router still carries failure state: %+v", st)
+	}
+}
+
+// TestFailureReasonClassification locks the diagnosis an operator reads.
+func TestFailureReasonClassification(t *testing.T) {
+	mk := func(msg string) error { return errors.New(msg) }
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{mk(`i2pcontrol: request to router r failed: Post "http://172.28.0.5:7650/": dial tcp: connect: connection refused`), ReasonNotServing},
+		{mk("i2pcontrol: request timed out: router r"), ReasonTimeout},
+		{mk("context deadline exceeded"), ReasonTimeout},
+		{mk("i2pcontrol: rpc error -32001: Invalid password"), ReasonAuth},
+		{mk("i2pcontrol: router returned no authentication token"), ReasonAuth},
+		{mk("i2pcontrol: router r: HTTP status 503"), ReasonProtocol},
+		{mk("i2pcontrol: router r: malformed JSON response"), ReasonProtocol},
+		{mk("client setup failed: bad pinned cert"), ReasonInternal},
+		{mk("dial tcp: lookup host: no such host"), ReasonUnreachable},
+		{nil, ReasonNone},
+	}
+	for _, c := range cases {
+		if got := classifyFailure(c.err); got != c.want {
+			t.Errorf("classifyFailure(%v) = %q, want %q", c.err, got, c.want)
+		}
+	}
+}
+
+// TestNetworkTotalsAggregateAcrossRouters covers capability 2: the network
+// view must sum the values routers report, and must not invent a zero for a
+// value nobody reports.
+func TestNetworkTotalsAggregateAcrossRouters(t *testing.T) {
+	a := &RouterStatus{Name: "a", Impl: "i2pd", State: StateUp, Sample: &i2pcontrol.Sample{
+		KnownPeers: i64(3), ActivePeers: i64(1), BWInbound1s: f64(1024), CollectedAt: time.Now(),
+	}, LastSeen: time.Now()}
+	b := &RouterStatus{Name: "b", Impl: "goi2p", State: StateDown, Sample: &i2pcontrol.Sample{
+		KnownPeers: i64(7), CollectedAt: time.Now(),
+	}, LastSeen: time.Now()}
+	c := &RouterStatus{Name: "c", Impl: "i2pd", State: StateUp, Sample: &i2pcontrol.Sample{
+		// TunnelsInbound nil: i2pd does not serve it.
+		Participating: i64(2), CollectedAt: time.Now(),
+	}, LastSeen: time.Now()}
+	p := staticPoller(a, b, c)
+	p.interval = time.Minute
+
+	n := p.NetworkTotals()
+	if n.Routers != 3 {
+		t.Errorf("routers = %d, want 3", n.Routers)
+	}
+	if n.Up != 2 {
+		t.Errorf("up = %d, want 2", n.Up)
+	}
+	if n.KnownPeers == nil || *n.KnownPeers != 10 {
+		t.Errorf("known peers = %v, want 10 summed", n.KnownPeers)
+	}
+	if n.ActivePeers == nil || *n.ActivePeers != 1 {
+		t.Errorf("active peers = %v, want 1", n.ActivePeers)
+	}
+	if n.TunnelsInbound != nil {
+		t.Errorf("tunnels inbound = %v, want nil: no router reported it, so the total must not be a fake zero", *n.TunnelsInbound)
+	}
+	if n.TunnelsParticip == nil || *n.TunnelsParticip != 2 {
+		t.Errorf("participating = %v, want 2", n.TunnelsParticip)
+	}
+	if n.BWInbound1s == nil || *n.BWInbound1s != 1024 {
+		t.Errorf("bw in = %v, want 1024", n.BWInbound1s)
+	}
+}
+
+// TestNetworkTotalsIgnoreStaleData: summing a router that died ten minutes
+// ago would silently inflate the network view.
+func TestNetworkTotalsIgnoreStaleData(t *testing.T) {
+	fresh := &RouterStatus{Name: "fresh", State: StateUp, LastSeen: time.Now(),
+		Sample: &i2pcontrol.Sample{KnownPeers: i64(5), CollectedAt: time.Now()}}
+	ancient := &RouterStatus{Name: "ancient", State: StateDown, LastSeen: time.Now().Add(-time.Hour),
+		Sample: &i2pcontrol.Sample{KnownPeers: i64(99), CollectedAt: time.Now().Add(-time.Hour)}}
+	p := staticPoller(fresh, ancient)
+	p.interval = time.Minute
+
+	n := p.NetworkTotals()
+	if n.KnownPeers == nil || *n.KnownPeers != 5 {
+		t.Errorf("known peers = %v, want 5 (the hour-old sample must not count)", n.KnownPeers)
+	}
+}
+
+// TestNetworkHistoryIsRecordedAndCapped backs the network charts.
+func TestNetworkHistoryIsRecordedAndCapped(t *testing.T) {
+	r := newMockRouter(t)
+	p := NewPoller(5*time.Millisecond, time.Second, func(context.Context) []Target {
+		return []Target{{Name: "h", URL: r.srv.URL, Password: "p"}}
+	})
+	ctx := context.Background()
+	for i := 0; i < HistorySamples+25; i++ {
+		p.DispatchNow(ctx)
+	}
+	waitFor(t, 5*time.Second, func() bool { return len(p.NetworkHistory()) >= HistorySamples })
+	h := p.NetworkHistory()
+	if len(h) > HistorySamples {
+		t.Errorf("network history = %d, capped at %d", len(h), HistorySamples)
+	}
+	if !h[0].CollectedAt.After(h[len(h)-1].CollectedAt) {
+		t.Error("network history must be newest first")
+	}
+}
+
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"go-i2p-testnet/lib/monitor/web"
 	"go-i2p-testnet/lib/utils/logger"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 )
@@ -45,6 +46,14 @@ const PasswordFileName = ".i2pcontrol-password"
 
 // I2PControlPort is where testnet routers serve I2PControl.
 const I2PControlPort = 7650
+
+// Implementation names used across the dashboard. These are the only router
+// kinds the testnet knows how to launch, and the values come from the CLI's
+// own router records, never from a per-router list.
+const (
+	ImplI2PD  = "i2pd"
+	ImplGoI2P = "goi2p"
+)
 
 // i2pControlCertPath is where i2pd writes its self-signed I2PControl cert
 // inside the per-router datadir volume.
@@ -142,6 +151,8 @@ func (s *Source) Targets(ctx context.Context) []web.Target {
 			Impl:        rt.Impl,
 			Password:    s.password,
 			InsecureTLS: s.InsecureTLS,
+			ContainerID: rt.ContainerID,
+			IP:          rt.IP,
 		}
 		switch rt.Impl {
 		case "i2pd":
@@ -231,38 +242,54 @@ func RoutersFromDocker(cli *client.Client, networkName string) func() []Router {
 			log.WithError(err).Warn("dashboard: docker container list failed")
 			return nil
 		}
-		var out []Router
-		for _, c := range list {
-			name := ""
-			for _, n := range c.Names {
-				if strings.HasPrefix(strings.TrimPrefix(n, "/"), "router-") {
-					name = strings.TrimPrefix(n, "/")
-					break
-				}
+		return SelectRouters(list, networkName)
+	}
+}
+
+// SelectRouters is the discovery decision, separated from the Docker call so
+// it can be tested against container listings directly. A container joins the
+// roster when its name is a testnet router name and it holds an address on the
+// testnet network; everything else is ignored, including unrelated containers
+// that happen to be running on the host.
+func SelectRouters(list []types.Container, networkName string) []Router {
+	var out []Router
+	for _, c := range list {
+		name := ""
+		for _, n := range c.Names {
+			if strings.HasPrefix(strings.TrimPrefix(n, "/"), "router-") {
+				name = strings.TrimPrefix(n, "/")
+				break
 			}
-			if name == "" {
-				continue
-			}
-			ip := ""
-			if nets := c.NetworkSettings; nets != nil {
-				if ep, ok := nets.Networks[networkName]; ok && ep.IPAddress != "" {
-					ip = ep.IPAddress
-				}
-			}
-			impl := "goi2p"
-			switch {
-			case strings.HasPrefix(name, "router-i2pd-"):
-				impl = "i2pd"
-			case strings.HasPrefix(name, "router-goi2p-"):
-				impl = "goi2p"
-			case strings.Contains(c.Image, "i2pd"):
-				impl = "i2pd"
-			}
-			if ip == "" {
-				continue // not attached to the testnet network
-			}
-			out = append(out, Router{Name: name, Impl: impl, IP: ip, ContainerID: c.ID})
 		}
-		return out
+		if name == "" {
+			continue
+		}
+		ip := ""
+		if nets := c.NetworkSettings; nets != nil {
+			if ep, ok := nets.Networks[networkName]; ok && ep.IPAddress != "" {
+				ip = ep.IPAddress
+			}
+		}
+		if ip == "" {
+			continue // not attached to the testnet network
+		}
+		out = append(out, Router{Name: name, Impl: RouterImpl(name, c.Image), IP: ip, ContainerID: c.ID})
+	}
+	return out
+}
+
+// RouterImpl classifies a router by name, falling back to its image. go-i2p is
+// the default because it is the implementation with the fewest tell-tale
+// strings, not because it is expected more often.
+func RouterImpl(name, image string) string {
+	switch {
+	case strings.HasPrefix(name, "router-i2pd-"):
+		return ImplI2PD
+	case strings.HasPrefix(name, "router-goi2p-"):
+		return ImplGoI2P
+	case strings.Contains(image, "i2pd"):
+		return ImplI2PD
+	default:
+		return ImplGoI2P
 	}
 }

@@ -1,28 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="{{.RefreshSecs}}">
-<title>go-i2p testnet dashboard</title>
-<style>
-body { font-family: system-ui, sans-serif; margin: 1.5rem; background:#101418; color:#d8dee4; }
-h1 { font-size: 1.3rem; }
-.totals { display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
-.totals div { padding:.4rem .8rem; border-radius:.4rem; background:#1b2129; }
-.totals .up b { color:#3fb950; } .totals .down b { color:#f85149; }
-.totals .stale b { color:#d29922; } .totals .pending b { color:#8b949e; }
-table { border-collapse: collapse; width:100%; }
-th, td { padding:.35rem .6rem; border-bottom:1px solid #2d333b; text-align:left; font-size:.9rem; white-space:nowrap; }
-th { color:#8b949e; font-weight:600; }
-tr.ok td.state { color:#3fb950; } tr.down td.state { color:#f85149; }
-tr.stale td.state { color:#d29922; } tr.pending td.state { color:#8b949e; }
-.err { color:#f85149; font-size:.8rem; }
-a { color:#58a6ff; text-decoration:none; }
-footer { margin-top:1rem; color:#8b949e; font-size:.8rem; }
-</style>
-</head>
-<body>
+{{template "head" .}}
+{{template "nav" .NavNote}}
 <h1>go-i2p testnet dashboard</h1>
+
 <div class="totals">
   <div>Routers: <b>{{.Total}}</b></div>
   <div class="up">Up: <b>{{.Up}}</b></div>
@@ -30,11 +9,27 @@ footer { margin-top:1rem; color:#8b949e; font-size:.8rem; }
   <div class="stale">Stale: <b>{{.Stale}}</b></div>
   <div class="pending">Pending: <b>{{.Pending}}</b></div>
 </div>
+
+<h2>Network totals</h2>
+<p class="note">{{.NetworkText}} — summed over the routers that report each value, {{.ChartWindow}} of history.</p>
+
+<h2>Network over time</h2>
+<div class="charts">
+  {{range .Charts}}
+  <div class="chart-box">
+    <h3>{{.Title}}</h3>
+    {{.SVG}}
+  </div>
+  {{end}}
+  {{if not .Charts}}
+  <div class="chart-empty">No aggregate samples yet — these fill in as the poller collects intervals.</div>
+  {{end}}
+</div>
+
+<h2>Routers</h2>
 <table>
   <thead><tr>
-    <th>Router</th><th>Impl</th><th>State</th><th>Version</th>
-    <th>Net status</th><th>Uptime</th><th>Tunnels in/out/part</th>
-    <th>Peers known/active</th><th>BW in/out (1s)</th><th>Last seen</th>
+    {{range .Columns}}<th>{{if .Key}}<a href="/?sort={{.Key}}&amp;dir={{.Next}}">{{.Label}}</a>{{.Mark}}{{else}}{{.Label}}{{end}}</th>{{end}}
   </tr></thead>
   <tbody>
   {{range .Routers}}
@@ -45,19 +40,29 @@ footer { margin-top:1rem; color:#8b949e; font-size:.8rem; }
       <td>{{.Version}}</td>
       <td>{{.NetStatusName}}</td>
       <td>{{.Uptime}}</td>
-      <td>{{.TunIn}}/{{.TunOut}}/{{.TunPart}}</td>
-      <td>{{.KnownPeers}}/{{.ActivePeers}}</td>
+      <td>{{.TunIn}} / {{.TunOut}} / {{.TunPart}}</td>
+      <td>{{.KnownPeers}} / {{.ActivePeers}}</td>
       <td>{{.BWIn1s}} / {{.BWOut1s}}</td>
       <td>{{.LastSeen}}</td>
     </tr>
-    {{if .LastError}}
-    <tr class="{{.StateClass}}"><td></td><td colspan="9" class="err">{{.LastError}}</td></tr>
+    {{if or .LastError .Failure}}
+    <tr class="{{.StateClass}}">
+      <td></td>
+      <td colspan="9" class="err">
+        {{if .Failure}}<span class="muted">[{{.Failure}}{{if gt .Failures 1}}, {{.Failures}} in a row{{end}}]</span> {{end}}{{.LastError}}
+        {{if .Diagnosis}}<div class="note">Why: {{.Diagnosis}}</div>{{end}}
+      </td>
+    </tr>
     {{end}}
   {{else}}
     <tr><td colspan="10">No routers yet — start the testnet and add routers.</td></tr>
   {{end}}
   </tbody>
 </table>
-<footer>Auto-refreshes every {{.RefreshSecs}}s. Dashboard up {{.Uptime}}. JSON: <a href="/api/status">/api/status</a></footer>
+
+<footer>
+  Auto-refreshes every {{.RefreshSecs}}s · snapshot {{.NowText}} · dashboard up {{.Uptime}} ·
+  <a href="/topology">topology</a>
+</footer>
 </body>
 </html>

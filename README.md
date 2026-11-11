@@ -137,32 +137,72 @@ This is separate from router logs, which are always captured to `./logs/`.
 
 `start` also boots a self-contained monitoring dashboard in the same
 process (stdlib only: no external web server, database, CDN, or frontend
-framework; history is in memory). It polls every router's I2PControl
-interface concurrently (5 s interval, ~5 s per-router timeout — one down
-router never delays the others) and shows:
+framework, no JavaScript; history is in memory). It polls every router's
+I2PControl interface concurrently (5 s interval, ~5 s per-router timeout —
+one down router never delays the others) and shows:
 
-- `http://127.0.0.1:8765/` — summary totals plus a per-router table
-  (version, net status, uptime, tunnels, peers, bandwidth), refreshing
-  every 5 seconds. Unreachable routers are shown **red** with the last
-  error; data older than three poll intervals is **amber** (stale).
-- `http://127.0.0.1:8765/router/<name>` — latest sample and the last 60
-  samples for one router.
-- `http://127.0.0.1:8765/api/status` — JSON snapshot.
+- `http://127.0.0.1:8765/` — network totals (peers, tunnels and bandwidth
+  summed across routers), charts of those totals over the last 60 samples,
+  and a per-router table (version, net status, uptime, tunnels, peers,
+  bandwidth) refreshing every 5 seconds. Column headers are links that sort
+  the table; sorting by **State** puts trouble on top.
+- `http://127.0.0.1:8765/router/<name>` — one router's peer, tunnel and
+  bandwidth charts plus its latest sample and the last 60 samples.
+- `http://127.0.0.1:8765/topology` — which router is connected to which.
+- `http://127.0.0.1:8765/api/topology` — the same graph as JSON.
+- `http://127.0.0.1:8765/api/status` — JSON snapshot of everything above.
 - `http://127.0.0.1:8765/healthz` — 200 while the dashboard runs.
+
+**Router states.** `up` is green. A router whose poll fails goes **amber
+(`stale`)** while its last good sample is still recent — the numbers on
+screen are real, just ageing — and **red (`down`)** once that data ages past
+three poll intervals, or if it never answered at all. Failures are also
+classified (`not-serving`, `timeout`, `auth`, `unreachable`, `protocol`) so
+"the control endpoint is not listening yet" is visibly different from "the
+router is wedged".
+
+**Charts.** Graphs are server-rendered SVG drawn from the samples the poller
+actually collected; nothing is plotted that no router reported. A value an
+implementation never exposes is labelled `not served by i2pd` rather than
+shown as a dash or a zero — i2pd 2.56 does not serve tunnel in/out or
+fast/high-capacity peer counts over I2PControl, and it renders those
+aggregates on its own webconsole only via client-side JavaScript. History
+covers 60 samples (5 minutes at the default interval) and is in memory, so
+restarting the CLI clears it.
+
+**Topology.** The graph is built from what the routers themselves report:
+each i2pd router's transport session table (read inside the container via
+the Docker API), each router's netDb contents, and each router's own
+`router.info` identity, which yields the base64 hash the netDb file names
+and session tables use. An edge is **observed** when a live transport
+session exists and **inferred** when a router merely stores that peer's
+RouterInfo. The page shows the graph's generation time. There is no
+hardcoded peer list: peers that match no router in the roster are shown as
+external rather than dropped, and a router that cannot be read produces a
+warning instead of silently vanishing.
 
 To disable it: `./bin/go-i2p-testnet -no-dashboard`. To run it standalone
 against an already-running testnet (routers discovered from the live Docker
 topology, nothing hardcoded): `make dashboard` or
 `./bin/go-i2p-testnet -dashboard`.
 
-**How routers are polled:** every router now serves I2PControl (JSON-RPC on
-port 7650). i2pd does so over HTTPS with a self-signed certificate it
-generates into its datadir; the dashboard reads that certificate through the
-Docker API and trusts *only* it (certificate pinning) — verification is
-never disabled silently. Use `-insecure-tls` to opt out of pinning
-explicitly (it prints a loud warning). go-i2p serves plaintext HTTP on the
-internal-only bridge, with its own `allow_plaintext_non_loopback` policy
-opt-in set in the generated config.
+**How routers are polled:** i2pd serves I2PControl (JSON-RPC on port 7650)
+over HTTPS with a self-signed certificate it generates into its datadir; the
+dashboard reads that certificate through the Docker API and trusts *only* it
+(certificate pinning) — verification is never disabled silently. Use
+`-insecure-tls` to opt out of pinning explicitly (it prints a loud warning).
+go-i2p is configured for plaintext HTTP on the internal-only bridge, with its
+own `allow_plaintext_non_loopback` policy opt-in set in the generated config.
+
+**Known limitation — go-i2p is only observable once bootstrapped.** Upstream
+go-i2p will not start its I2PControl server until its netDb holds 40
+RouterInfos, and that floor is not configurable (`--bootstrap.low-peer-threshold`
+and `--bootstrap.minimum-reseed-peers` do not change it). On a small testnet
+the router therefore stays `down` with reason `not-serving` and never
+publishes `router.info`. The dashboard reports this honestly and, because
+I2PControl is not the only channel available, adds a plain-language
+explanation derived from the router's own captured log telling you to run
+`sync` or add routers. Fixing the floor itself belongs to go-i2p, not here.
 
 **Password:** all routers share one I2PControl password. The CLI resolves it
 in this order: the `GO_I2P_TESTNET_I2PCONTROL_PASSWORD` environment
@@ -171,7 +211,13 @@ freshly generated random password written to that file (mode 0600). The
 dashboard (including standalone mode) reads the same sources. The
 well-known default `itoopie` is refused unless you are doing local testing
 and set `TESTNET_ALLOW_DEFAULT_I2PCONTROL_PASSWORD=1`. Passwords and auth
-tokens are never logged or rendered.
+tokens are never logged or rendered by this tool: they appear in no page, no
+JSON, no CLI output and no captured log line (captured lines are scrubbed).
+Routers run at i2pd's `info` log level by default because i2pd prints the
+password it authenticates with at `debug`, and raw `docker logs` output is
+outside this tool's scrubbing. Set `TESTNET_I2PD_LOGLEVEL=debug` when you
+need that detail; the CLI then warns you that the credential will appear in
+container logs.
 
 ```shell
 export GO_I2P_TESTNET_I2PCONTROL_PASSWORD='pick-a-strong-one'

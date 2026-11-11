@@ -1,0 +1,64 @@
+{{define "head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{{.RefreshSecs}}">
+<title>{{.Title}} — go-i2p testnet</title>
+<style>
+body { font-family: system-ui, sans-serif; margin:1.5rem; background:#101418; color:#d8dee4; }
+h1 { font-size:1.3rem; margin-bottom:.2rem; }
+h2 { font-size:1.05rem; color:#8b949e; margin-top:1.4rem; }
+a { color:#58a6ff; text-decoration:none; }
+.totals { display:flex; gap:1rem; flex-wrap:wrap; margin:.6rem 0 1rem; }
+.totals div { padding:.4rem .8rem; border-radius:.4rem; background:#1b2129; }
+.totals .up b { color:#3fb950; } .totals .down b { color:#f85149; }
+.totals .stale b { color:#d29922; } .totals .pending b { color:#8b949e; }
+table { border-collapse:collapse; width:100%; }
+th, td { padding:.35rem .6rem; border-bottom:1px solid #2d333b; text-align:left;
+         font-size:.9rem; white-space:nowrap; }
+th { color:#8b949e; font-weight:600; }
+td.num, th.num { text-align:right; }
+tr.ok td.state { color:#3fb950; } tr.down td.state { color:#f85149; }
+tr.stale td.state { color:#d29922; } tr.pending td.state { color:#8b949e; }
+.err { color:#f85149; font-size:.8rem; }
+.note { color:#8b949e; font-size:.8rem; }
+.muted { color:#8b949e; }
+footer { margin-top:1rem; color:#8b949e; font-size:.8rem; }
+nav { display:flex; gap:1.2rem; margin-bottom:1rem; padding-bottom:.6rem;
+      border-bottom:1px solid #2d333b; font-size:.9rem; }
+.charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr));
+          gap:1rem; margin:1rem 0; }
+.chart-box { background:#1b2129; border:1px solid #2d333b; border-radius:.5rem; padding:.6rem .8rem; }
+.chart-box h3 { margin:.1rem 0 .4rem; font-size:.95rem; color:#d8dee4; font-weight:600; }
+svg.chart { width:100%; height:auto; display:block; }
+svg.chart .grid { stroke:#2d333b; stroke-width:1; }
+svg.chart .zero { stroke:#4b5563; stroke-width:1; stroke-dasharray:2 3; }
+svg.chart text { fill:#8b949e; font-size:11px; font-family:system-ui,sans-serif; }
+svg.chart text.ylab { text-anchor:end; }
+svg.chart text.xlab { text-anchor:middle; }
+svg.chart text.legend { fill:#d8dee4; font-size:11px; }
+svg.topo text.node { fill:#d8dee4; font-size:12px; font-weight:600; }
+svg.topo text.nodesub { fill:#8b949e; font-size:10px; }
+.chart-empty { color:#8b949e; font-size:.85rem; padding:1.2rem .6rem;
+               background:#161b22; border:1px dashed #2d333b; border-radius:.4rem; text-align:center; }
+.kv { display:grid; grid-template-columns:15rem 1fr; gap:.2rem .8rem; margin:1rem 0; }
+.kv dt { color:#8b949e; } .kv dd { margin:0; }
+.badge { display:inline-block; padding:.05rem .45rem; border-radius:.4rem; font-size:.75rem; }
+.badge.observed { background:#12261b; color:#3fb950; border:1px solid #238636; }
+.badge.inferred { background:#262010; color:#d29922; border:1px solid #9e6a03; }
+.legend-svg text { fill:#8b949e; font-size:11px; font-family:system-ui,sans-serif; }
+</style>
+</head>
+<body>
+{{end}}
+
+{{define "nav"}}
+<nav>
+  <a href="/">Routers</a>
+  <a href="/topology">Topology</a>
+  <a href="/api/status">/api/status</a>
+  <a href="/api/topology">/api/topology</a>
+  <span class="muted">{{.}}</span>
+</nav>
+{{end}}

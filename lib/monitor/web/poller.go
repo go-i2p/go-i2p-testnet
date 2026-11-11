@@ -5,6 +5,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,11 +16,35 @@ import (
 )
 
 // Router states. Down renders red, Stale renders amber.
+//
+// The two are distinguished by how much good data is still on hand, which is
+// what an operator actually cares about:
+//
+//	pending  never sampled successfully since the router appeared
+//	up       last sample is fresh
+//	stale    a poll failed (or was skipped) but the last good sample is still
+//	         within StaleIntervals — the numbers shown are real, just ageing
+//	down     a poll failed and the last good sample is older than
+//	         StaleIntervals, or the router has never answered at all
 const (
 	StatePending = "pending" // never sampled yet
 	StateUp      = "up"
 	StateDown    = "down"
 	StateStale   = "stale"
+)
+
+// Failure reasons classify the last poll error so an operator can tell "the
+// control endpoint is not serving" apart from "the router is wedged" apart
+// from "we are not allowed in". Without this every problem looks like one
+// identical red cell.
+const (
+	ReasonNone        = ""
+	ReasonNotServing  = "not-serving" // connection refused: I2PControl not listening yet
+	ReasonUnreachable = "unreachable" // no route / host down
+	ReasonTimeout     = "timeout"     // accepted the connection, never answered
+	ReasonAuth        = "auth"        // credentials rejected
+	ReasonProtocol    = "protocol"    // answered, but not with usable JSON-RPC
+	ReasonInternal    = "internal"    // client setup or unexpected failure
 )
 
 // HistorySamples is how many samples the detail page keeps and shows.
@@ -38,6 +63,8 @@ type Target struct {
 	Password      string // never rendered, never serialized
 	PinnedCertPEM []byte // trust only this cert for https endpoints
 	InsecureTLS   bool   // explicit operator opt-in, warned about by the caller
+	ContainerID   string // Docker id, empty in tests; used for topology only
+	IP            string // container address on the testnet bridge
 }
 
 // key fingerprints everything that requires rebuilding the client when it
@@ -54,16 +81,39 @@ type SourceFunc func(ctx context.Context) []Target
 
 // RouterStatus is the observable state of one router.
 type RouterStatus struct {
-	Name      string
-	Impl      string
-	URL       string
-	State     string
-	LastError string
-	LastSeen  time.Time // last successful sample
-	Sample    *i2pcontrol.Sample
-	History   []*i2pcontrol.Sample // newest first, capped at HistorySamples
+	Name          string
+	Impl          string
+	URL           string
+	ContainerID   string // Docker id for topology collection; empty if unknown
+	IP            string // container address on the testnet bridge
+	State         string
+	LastError     string
+	FailureReason string    // one of the Reason* constants, empty when up
+	Failures      int       // consecutive failed polls, for the UI's "since" hint
+	LastSeen      time.Time // last successful sample
+	Sample        *i2pcontrol.Sample
+	History       []*i2pcontrol.Sample // newest first, capped at HistorySamples
+	InFlight      bool                 // a poll goroutine is running right now
+	StaleSince    time.Time            // when this router stopped being fresh
 
 	checkedKF string // fingerprint of the last synced client config
+}
+
+// NetworkTotals is one aggregate sample of the whole testnet, summed across
+// routers that reported the field. Fields are nil when no router supplied
+// them in that interval, so the UI can say "not reported" instead of showing
+// a misleading zero.
+type NetworkTotals struct {
+	CollectedAt     time.Time
+	Routers         int
+	Up              int
+	KnownPeers      *int64
+	ActivePeers     *int64
+	TunnelsInbound  *int64
+	TunnelsOutbound *int64
+	TunnelsParticip *int64
+	BWInbound1s     *float64
+	BWOutbound1s    *float64
 }
 
 // Poller polls every router concurrently on a fixed interval and keeps the
@@ -76,7 +126,8 @@ type Poller struct {
 	mu       sync.RWMutex
 	statuses map[string]*RouterStatus
 	clients  map[string]*i2pcontrol.Client
-	inFlight map[string]bool // router name -> poll goroutine running
+	inFlight map[string]bool  // router name -> poll goroutine running
+	network  []*NetworkTotals // newest first, capped at HistorySamples
 
 	running bool
 	stop    chan struct{}
@@ -101,6 +152,7 @@ func NewPoller(interval, timeout time.Duration, source SourceFunc) *Poller {
 		statuses: map[string]*RouterStatus{},
 		clients:  map[string]*i2pcontrol.Client{},
 		inFlight: map[string]bool{},
+		network:  []*NetworkTotals{},
 	}
 }
 
@@ -170,6 +222,49 @@ func (p *Poller) pollCycle(ctx context.Context) {
 // DispatchNow runs one immediate cycle (used by tests and the CLI).
 func (p *Poller) DispatchNow(ctx context.Context) { p.pollCycle(ctx) }
 
+// classifyFailure maps a poll error onto a Reason* constant. The error text
+// is produced by the i2pcontrol client and never contains the password or a
+// token, so it is safe to inspect. Ordering matters: an authentication
+// failure can also surface as an HTTP error, so auth is checked first.
+func classifyFailure(err error) string {
+	if err == nil {
+		return ReasonNone
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "client setup failed"):
+		return ReasonInternal
+	case strings.Contains(msg, "internal error while polling"):
+		return ReasonInternal
+	case strings.Contains(msg, "i2pcontrol: router returned no authentication token"),
+		strings.Contains(msg, "invalid password"),
+		strings.Contains(msg, "authentication"),
+		strings.Contains(msg, "rpc error -32000"),
+		strings.Contains(msg, "rpc error -32001"),
+		strings.Contains(msg, "rpc error -32003"),
+		strings.Contains(msg, "rpc error -32004"):
+		return ReasonAuth
+	case errors.Is(err, i2pcontrol.ErrTimeout),
+		strings.Contains(msg, "timeout"),
+		strings.Contains(msg, "timed out"),
+		strings.Contains(msg, "deadline exceeded"):
+		return ReasonTimeout
+	case strings.Contains(msg, "connection refused"):
+		return ReasonNotServing
+	case strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "network is unreachable"),
+		strings.Contains(msg, "connect: network"),
+		strings.Contains(msg, "no route to host"):
+		return ReasonUnreachable
+	case strings.Contains(msg, "malformed json"),
+		strings.Contains(msg, "http status"),
+		strings.Contains(msg, "rpc error"):
+		return ReasonProtocol
+	default:
+		return ReasonProtocol
+	}
+}
+
 func (p *Poller) dispatch(ctx context.Context) {
 	p.mu.RLock()
 	type job struct {
@@ -195,12 +290,18 @@ func (p *Poller) dispatch(ctx context.Context) {
 			continue
 		}
 		p.inFlight[j.name] = true
+		if st, ok := p.statuses[j.name]; ok {
+			st.InFlight = true
+		}
 		p.mu.Unlock()
 
 		go func(name string, cl *i2pcontrol.Client, st *RouterStatus) {
 			defer func() {
 				p.mu.Lock()
 				p.inFlight[name] = false
+				if cur, ok := p.statuses[name]; ok {
+					cur.InFlight = false
+				}
 				p.mu.Unlock()
 			}()
 			sample, err := cl.Poll(ctx)
@@ -211,13 +312,23 @@ func (p *Poller) dispatch(ctx context.Context) {
 				return // router removed while polling
 			}
 			if err != nil {
-				cur.State = StateDown
+				// A failed poll keeps the last good sample on screen. The
+				// router is amber (stale) while that sample is still recent
+				// and red (down) once it ages past StaleIntervals — so real
+				// data is never thrown away by one bad cycle, and a genuinely
+				// dead router still turns red within two intervals.
 				cur.LastError = err.Error()
+				cur.FailureReason = classifyFailure(err)
+				cur.Failures++
+				p.applyUnhealthy(cur, time.Now())
 				return
 			}
 			cur.Sample = sample
 			cur.LastSeen = sample.CollectedAt
 			cur.LastError = ""
+			cur.FailureReason = ReasonNone
+			cur.Failures = 0
+			cur.StaleSince = time.Time{}
 			cur.State = StateUp
 			cur.History = append([]*i2pcontrol.Sample{sample}, cur.History...)
 			if len(cur.History) > HistorySamples {
@@ -227,23 +338,47 @@ func (p *Poller) dispatch(ctx context.Context) {
 	}
 }
 
-// sweepStale marks routers whose last good sample is older than
-// StaleIntervals intervals as stale (amber) — unless their current poll
-// failed, which is reported as down (red) with the last error.
+// applyUnhealthy decides between stale and down for a router that is not
+// answering. Callers must hold p.mu.
+func (p *Poller) applyUnhealthy(st *RouterStatus, now time.Time) {
+	cutoff := now.Add(-time.Duration(StaleIntervals) * p.interval)
+	freshEnough := !st.LastSeen.IsZero() && st.LastSeen.After(cutoff)
+	if st.Sample != nil && freshEnough {
+		if st.State != StateStale {
+			st.State = StateStale
+			st.StaleSince = now
+		}
+		return
+	}
+	st.State = StateDown
+}
+
+// sweepStale ages routers whose last good sample is older than
+// StaleIntervals intervals. A router that never answered at all is reported
+// down; a router whose poll is still in flight keeps its last data and goes
+// amber, because the numbers on screen are real but ageing.
 func (p *Poller) sweepStale() {
-	cutoff := time.Now().Add(-time.Duration(StaleIntervals) * p.interval)
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(StaleIntervals) * p.interval)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, st := range p.statuses {
 		switch st.State {
 		case StateUp:
+			// A poll that is still in flight (a slow router) also ages the
+			// data, so the amber state is reachable without any failure.
 			if !st.LastSeen.IsZero() && st.LastSeen.Before(cutoff) {
 				st.State = StateStale
+				st.StaleSince = now
 			}
 		case StateStale:
-			// Recovered to up when a fresh sample landed after the sweep.
+			// Amber data that ages past the window is reported down.
+			if st.LastSeen.Before(cutoff) {
+				st.State = StateDown
+			}
 		}
 	}
+	p.recordNetworkHistory(now)
 }
 
 // syncTargets diffs the source list against live clients: creates clients
@@ -285,6 +420,8 @@ func (p *Poller) syncTargets(ctx context.Context) {
 			st.Impl = t.Impl
 			st.URL = t.URL
 		}
+		st.ContainerID = t.ContainerID
+		st.IP = t.IP
 		if st.checkedKF == t.key() {
 			continue
 		}
@@ -360,4 +497,105 @@ func (p *Poller) Totals() (routers, up, down, stale, pending int) {
 		}
 	}
 	return
+}
+
+// NetworkTotals sums the current sample of every router that reported each
+// field, so the operator can read network-wide peers/tunnels/bandwidth
+// instead of adding up rows by hand. A field is nil when no router supplied
+// it — i2pd does not serve tunnel in/out, so that stays honest rather than
+// becoming a fake zero.
+func (p *Poller) NetworkTotals() *NetworkTotals {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.aggregateLocked(time.Now())
+}
+
+// NetworkHistory returns the recorded aggregate samples, newest first, capped
+// at HistorySamples — the data the network charts are drawn from.
+func (p *Poller) NetworkHistory() []*NetworkTotals {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make([]*NetworkTotals, len(p.network))
+	copy(out, p.network)
+	return out
+}
+
+// recordNetworkHistory appends this interval's aggregate. Callers hold p.mu.
+func (p *Poller) recordNetworkHistory(now time.Time) {
+	totals := p.aggregateLocked(now)
+	p.network = append([]*NetworkTotals{totals}, p.network...)
+	if len(p.network) > HistorySamples {
+		p.network = p.network[:HistorySamples]
+	}
+}
+
+// aggregateLocked computes the network-wide sums. Callers hold at least the
+// read lock.
+func (p *Poller) aggregateLocked(now time.Time) *NetworkTotals {
+	t := &NetworkTotals{CollectedAt: now}
+	var known, active, tin, tout, part int64
+	var bwIn, bwOut float64
+	var hasKnown, hasActive, hasTin, hasTout, hasPart, hasBW bool
+	for _, st := range p.statuses {
+		t.Routers++
+		if st.State == StateUp {
+			t.Up++
+		}
+		s := st.Sample
+		if s == nil {
+			continue
+		}
+		// Only count data that is not older than the stale window: summing a
+		// router that died ten minutes ago would silently skew the total.
+		if st.LastSeen.IsZero() || now.Sub(st.LastSeen) > time.Duration(StaleIntervals)*p.interval {
+			continue
+		}
+		if v := s.KnownPeers; v != nil {
+			known += *v
+			hasKnown = true
+		}
+		if v := s.ActivePeers; v != nil {
+			active += *v
+			hasActive = true
+		}
+		if v := s.TunnelsInbound; v != nil {
+			tin += *v
+			hasTin = true
+		}
+		if v := s.TunnelsOutbound; v != nil {
+			tout += *v
+			hasTout = true
+		}
+		if v := s.Participating; v != nil {
+			part += *v
+			hasPart = true
+		}
+		if v := s.BWInbound1s; v != nil {
+			bwIn += *v
+			hasBW = true
+		}
+		if v := s.BWOutbound1s; v != nil {
+			bwOut += *v
+		}
+	}
+	if hasKnown {
+		t.KnownPeers = &known
+	}
+	if hasActive {
+		t.ActivePeers = &active
+	}
+	if hasTin {
+		t.TunnelsInbound = &tin
+	}
+	if hasTout {
+		t.TunnelsOutbound = &tout
+	}
+	if hasPart {
+		t.TunnelsParticip = &part
+	}
+	if hasBW {
+		t.BWInbound1s = &bwIn
+		t.BWOutbound1s = &bwOut
+	}
+	return t
 }

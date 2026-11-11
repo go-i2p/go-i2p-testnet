@@ -310,3 +310,85 @@ func (m *LogManager) Names() []string {
 	sort.Strings(names)
 	return names
 }
+
+// Diagnosis turns a router's own captured log output into a plain-language
+// reason it cannot be observed.
+//
+// The dashboard's only observation channel is I2PControl, so a router that
+// never starts that endpoint is indistinguishable from one that crashed: both
+// read "connection refused". That is true and useless. These rules read the
+// tail of the log the manager already captures, which is a second, independent
+// channel, and say what the router is actually waiting on.
+type diagnosisRule struct {
+	// needles must all appear in the log tail for the rule to fire.
+	needles []string
+	// explanation is operator-facing and names the remedy when there is one.
+	explanation string
+}
+
+var diagnosisRules = []diagnosisRule{
+	{
+		needles: []string{"initial reseed incomplete", "did not reach the peer floor"},
+		explanation: "the router is still bootstrapping: it refuses to start its control " +
+			"interface until it has the minimum number of peers (the log names that floor). " +
+			"Publish RouterInfos to it with `sync`, or add enough routers, then it will come up.",
+	},
+	{
+		needles: []string{"no valid netDb directory found"},
+		explanation: "the router found no netDb to bootstrap from, so it never reaches the " +
+			"point of serving its control interface. Run `sync` to publish RouterInfos into the shared netDb.",
+	},
+	{
+		needles:     []string{"Rebooting", "restarting"},
+		explanation: "the router is restarting; its control interface is not up yet.",
+	},
+}
+
+// maxDiagnosisBytes bounds how much of a router's log is inspected per call.
+// The dashboard calls this while rendering, so it must stay small and cheap.
+const maxDiagnosisBytes = 32 * 1024
+
+// Diagnose reads the tail of one router's captured log and returns a
+// human-readable reason it is not observable, or "" when nothing matches.
+// It never returns an error: a missing or unreadable log is simply "no
+// explanation available", which is honest rather than a failure.
+func (m *LogManager) Diagnose(name string) string {
+	if m == nil || name == "" {
+		return ""
+	}
+	path := filepath.Join(m.logDir, filepath.Base(name)+".log")
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return ""
+	}
+	start := st.Size() - maxDiagnosisBytes
+	if start < 0 {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	buf := make([]byte, st.Size()-start)
+	n, _ := f.Read(buf)
+	tail := string(buf[:n])
+
+	for _, rule := range diagnosisRules {
+		matched := true
+		for _, needle := range rule.needles {
+			if !strings.Contains(tail, needle) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return rule.explanation
+		}
+	}
+	return ""
+}
