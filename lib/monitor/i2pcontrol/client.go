@@ -536,31 +536,14 @@ func decodeSample(fields map[string]json.RawMessage) *Sample {
 	}
 	statusStr := getStr(PropStatus)
 	if statusStr != "" {
-		// i2pd sends a numeric code as a string ("0"); translate it.
-		if code, ok := parseStatusAsCode(statusStr); ok {
-			s.Status = NetStatusName(code)
-			if s.NetStatus == nil {
-				c := code
-				s.NetStatus = &c
-				s.NetStatusName = NetStatusName(code)
-			}
-		} else {
-			s.Status = statusStr
-		}
+		// i2p.router.status is implementation-specific: i2pd sends a
+		// destination-readiness flag ("0" = not ready, "1" = ready), while
+		// go-i2p sends free text (e.g. "RUNNING"). It is not a net-status
+		// code, so do not reinterpret it through NetStatusName. The web
+		// layer formats it per implementation (see formatRouterStatus).
+		s.Status = statusStr
 	}
 	return s
-}
-
-func parseStatusAsCode(str string) (int, bool) {
-	str = strings.TrimSpace(str)
-	v, err := strconv.Atoi(str)
-	if err != nil || v < 0 || v > 14 {
-		return 0, false
-	}
-	if _, isKnown := netstatusNames[v]; !isKnown {
-		return 0, false
-	}
-	return v, true
 }
 
 // redact removes secret substrings (token, password) from server-provided

@@ -15,11 +15,14 @@ import (
 	"go-i2p-testnet/lib/monitor/topology"
 )
 
-// Ring geometry for the circular layout.
+// Ring geometry for the circular layout. The canvas scales with the number
+// of nodes so routers stay legible even at large rosters: each node gets at
+// least 60 px of arc, and the SVG viewBox grows accordingly.
 const (
-	ringWidth  = 520
-	ringHeight = 420
-	ringRadius = 165
+	ringMinWidth  = 520
+	ringMinHeight = 420
+	ringMinRadius = 165
+	nodeArcPx     = 60 // minimum arc length per node
 )
 
 // topologyRing is one node's placed position.
@@ -38,26 +41,47 @@ type topologySVGEdge struct {
 	X2, Y2 float64
 }
 
+// ringGeometry returns the canvas size and radius for n nodes, scaled so
+// each node has at least nodeArcPx of arc.
+func ringGeometry(n int) (width, height, radius float64) {
+	if n <= 0 {
+		return ringMinWidth, ringMinHeight, ringMinRadius
+	}
+	// Circumference needed so each node gets nodeArcPx of arc.
+	circ := float64(n) * nodeArcPx
+	r := circ / (2 * math.Pi)
+	if r < ringMinRadius {
+		r = ringMinRadius
+	}
+	// Square canvas with padding so labels fit.
+	pad := 60.0
+	size := 2*r + pad
+	if size < ringMinWidth {
+		size = ringMinWidth
+	}
+	return size, size, r
+}
+
 // layoutRing places the named nodes evenly on a circle, starting at the top.
 // Order comes from the caller (sorted by observed connectivity), so the
 // picture reflects the graph rather than a fixed arrangement.
-func layoutRing(names []string) []topologyRing {
+func layoutRing(names []string) ([]topologyRing, float64, float64, float64) {
 	n := len(names)
 	if n == 0 {
-		return nil
+		return nil, ringMinWidth, ringMinHeight, ringMinRadius
 	}
+	width, height, radius := ringGeometry(n)
+	cx, cy := width/2, height/2
 	out := make([]topologyRing, 0, n)
-	cx, cy := float64(ringWidth/2), float64(ringHeight/2)
-	r := float64(ringRadius)
 	for i, name := range names {
 		ang := -math.Pi/2 + 2*math.Pi*float64(i)/float64(n)
 		out = append(out, topologyRing{
 			Name: name,
-			X:    cx + r*math.Cos(ang),
-			Y:    cy + r*math.Sin(ang),
+			X:    cx + radius*math.Cos(ang),
+			Y:    cy + radius*math.Sin(ang),
 		})
 	}
-	return out
+	return out, width, height, radius
 }
 
 // decorateRings fills in the per-node display fields from the graph.
@@ -87,8 +111,8 @@ func (v topologyView) TopologySVG() template.HTML {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `<svg class="chart topo" viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-label="router topology">`,
-		ringWidth, ringHeight, ringWidth, ringHeight)
+	fmt.Fprintf(&b, `<svg class="chart topo" viewBox="0 0 %.0f %.0f" width="%.0f" height="%.0f" role="img" aria-label="router topology">`,
+		v.Width, v.Height, v.Width, v.Height)
 
 	// edges first so nodes sit on top
 	for _, e := range v.Edges {

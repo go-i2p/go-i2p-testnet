@@ -79,6 +79,12 @@ func (t Target) key() string {
 // disappear without restarting the dashboard.
 type SourceFunc func(ctx context.Context) []Target
 
+// EnrichFunc augments a freshly polled sample with data the control endpoint
+// does not serve. It is called after a successful poll, before the sample is
+// stored. The web dashboard uses it to merge i2pd webconsole tunnel counts
+// into the sample. It must not block: a slow enrich leaves the sample as-is.
+type EnrichFunc func(ctx context.Context, st *RouterStatus, sample *i2pcontrol.Sample)
+
 // RouterStatus is the observable state of one router.
 type RouterStatus struct {
 	Name          string
@@ -122,6 +128,7 @@ type Poller struct {
 	interval time.Duration
 	timeout  time.Duration
 	source   SourceFunc
+	enrich   EnrichFunc // optional: augments samples with non-I2PControl data
 
 	mu       sync.RWMutex
 	statuses map[string]*RouterStatus
@@ -139,6 +146,13 @@ type Poller struct {
 // its own goroutine and cycles never wait for stragglers, so one slow or
 // down router cannot delay the others.
 func NewPoller(interval, timeout time.Duration, source SourceFunc) *Poller {
+	return NewPollerWithEnrich(interval, timeout, source, nil)
+}
+
+// NewPollerWithEnrich is like NewPoller but accepts an optional enrich
+// callback that augments samples with data the control endpoint does not
+// serve (e.g. i2pd webconsole tunnel counts).
+func NewPollerWithEnrich(interval, timeout time.Duration, source SourceFunc, enrich EnrichFunc) *Poller {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -149,6 +163,7 @@ func NewPoller(interval, timeout time.Duration, source SourceFunc) *Poller {
 		interval: interval,
 		timeout:  timeout,
 		source:   source,
+		enrich:   enrich,
 		statuses: map[string]*RouterStatus{},
 		clients:  map[string]*i2pcontrol.Client{},
 		inFlight: map[string]bool{},
@@ -305,13 +320,13 @@ func (p *Poller) dispatch(ctx context.Context) {
 				p.mu.Unlock()
 			}()
 			sample, err := cl.Poll(ctx)
-			p.mu.Lock()
-			defer p.mu.Unlock()
-			cur, ok := p.statuses[name]
-			if !ok {
-				return // router removed while polling
-			}
 			if err != nil {
+				p.mu.Lock()
+				defer p.mu.Unlock()
+				cur, ok := p.statuses[name]
+				if !ok {
+					return // router removed while polling
+				}
 				// A failed poll keeps the last good sample on screen. The
 				// router is amber (stale) while that sample is still recent
 				// and red (down) once it ages past StaleIntervals — so real
@@ -322,6 +337,17 @@ func (p *Poller) dispatch(ctx context.Context) {
 				cur.Failures++
 				p.applyUnhealthy(cur, time.Now())
 				return
+			}
+			// Enrich outside the poller mutex: webconsole reads are blocking
+			// Docker execs and must not hold p.mu.
+			if p.enrich != nil {
+				p.enrich(ctx, st, sample)
+			}
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			cur, ok := p.statuses[name]
+			if !ok {
+				return // router removed while polling
 			}
 			cur.Sample = sample
 			cur.LastSeen = sample.CollectedAt
@@ -396,18 +422,21 @@ func (p *Poller) syncTargets(ctx context.Context) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Drop vanished routers. The router list is the testnet's state, not
-	// ours to remember.
+	// Vanished routers (e.g. docker stop removed them from discovery) are
+	// kept in the roster with state down so the operator does not lose sight
+	// of them. Their clients are closed since they can no longer be polled.
+	// Mark them down only once so the failure count does not inflate every
+	// cycle while they remain absent.
 	for name := range p.clients {
 		if _, ok := want[name]; !ok {
 			p.clients[name].Close()
 			delete(p.clients, name)
-			delete(p.statuses, name)
-		}
-	}
-	for name := range p.statuses {
-		if _, ok := want[name]; !ok {
-			delete(p.statuses, name)
+			if st, ok := p.statuses[name]; ok && st.State != StateDown {
+				st.State = StateDown
+				st.LastError = "router removed from discovery (stopped or deleted)"
+				st.FailureReason = ReasonUnreachable
+				st.Failures++
+			}
 		}
 	}
 

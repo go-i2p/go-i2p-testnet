@@ -101,9 +101,11 @@ func TestAuthenticateAndRouterInfo(t *testing.T) {
 	if s.UptimeMs == nil || *s.UptimeMs != 123456 {
 		t.Errorf("UptimeMs = %v, want 123456", s.UptimeMs)
 	}
-	// i2pd sends status as the string "0"; it must decode to the netstatus name.
-	if s.Status != "OK" {
-		t.Errorf("Status = %q, want OK", s.Status)
+	// i2pd sends i2p.router.status as a destination-readiness flag ("0" =
+	// not ready, "1" = ready); it is not a net-status code, so it is kept
+	// as-is and formatted per implementation by the web layer.
+	if s.Status != "0" {
+		t.Errorf("Status = %q, want raw readiness flag %q", s.Status, "0")
 	}
 	if s.NetStatus == nil || *s.NetStatus != 2 || s.NetStatusName != "FIREWALLED" {
 		t.Errorf("NetStatus = %v/%q, want 2/FIREWALLED", s.NetStatus, s.NetStatusName)

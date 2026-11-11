@@ -18,6 +18,7 @@ import (
 	"go-i2p-testnet/lib/i2pd"
 	"go-i2p-testnet/lib/monitor"
 	"go-i2p-testnet/lib/monitor/dashboard"
+	"go-i2p-testnet/lib/monitor/i2pcontrol"
 	"go-i2p-testnet/lib/monitor/web"
 	"go-i2p-testnet/lib/utils/logger"
 
@@ -56,6 +57,7 @@ var (
 	dashPoller         *web.Poller
 	dashServer         *web.Server
 	dashTopology       *dashboard.TopologyService
+	dashCollector      *dashboard.Collector
 	dashCancel         context.CancelFunc
 	dashBindAddr       = "127.0.0.1:8765"
 	dashInsecureTLS    = false
@@ -96,7 +98,23 @@ func startDashboard(cli *client.Client, ctx context.Context, dockerDiscovery boo
 		fmt.Println("WARNING: dashboard TLS verification is DISABLED (-insecure-tls). Router certs are not checked.")
 		log.Warn("dashboard running with TLS verification disabled")
 	}
-	dashPoller = web.NewPoller(5*time.Second, 5*time.Second, src.Targets)
+	// Enrich I2PControl samples with i2pd webconsole data (tunnel counts)
+	// that I2PControl does not serve. The same collector is reused by the
+	// topology service.
+	dashCollector = dashboard.NewCollector(cli)
+	dashPoller = web.NewPollerWithEnrich(5*time.Second, 5*time.Second, src.Targets,
+		func(ctx context.Context, st *web.RouterStatus, sample *i2pcontrol.Sample) {
+			if st.Impl != dashboard.ImplI2PD {
+				return
+			}
+			in, out := dashCollector.WebconsoleTunnels(ctx, st)
+			if in != nil {
+				sample.TunnelsInbound = in
+			}
+			if out != nil {
+				sample.TunnelsOutbound = out
+			}
+		})
 	dashPoller.Start(ctx)
 
 	// Topology is rebuilt on its own cadence from live router data, so the

@@ -163,6 +163,10 @@ func (idx nodeIndex) matchByHash(prefix string) (Node, bool) {
 	return Node{}, false
 }
 
+// maxInferredPerRouter caps inferred edges per source router so a large
+// netDb does not explode the graph into thousands of rows.
+const maxInferredPerRouter = 20
+
 // Build computes the graph. Edges are de-duplicated per (from,to) pair with
 // observed always winning over inferred, and the result is sorted so identical
 // inputs always produce an identical graph.
@@ -243,11 +247,18 @@ func Build(in BuildInput) *Graph {
 			ownerOf[n.Hash] = n.Name
 		}
 	}
+	inferredCount := map[string]int{}
 	for _, k := range in.Knowledge {
 		if k.Router == "" {
 			continue
 		}
+		if inferredCount[k.Router] >= maxInferredPerRouter {
+			continue // cap reached for this source router
+		}
 		for _, h := range k.Hashes {
+			if inferredCount[k.Router] >= maxInferredPerRouter {
+				break
+			}
 			owner, ok := ownerOf[h]
 			if !ok || owner == k.Router {
 				continue // not a roster router, or the router's own info
@@ -261,7 +272,21 @@ func Build(in BuildInput) *Graph {
 				PeerHash: h,
 				Reason:   fmt.Sprintf("%s stores %s's RouterInfo in its netDb", k.Router, owner),
 			}
+			inferredCount[k.Router]++
 		}
+	}
+	// Warn when inferred edges were capped so the operator knows the graph
+	// is a sample, not the full adjacency.
+	capped := 0
+	for _, n := range nodes {
+		if c := inferredCount[n.Name]; c >= maxInferredPerRouter {
+			capped++
+		}
+	}
+	if capped > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"%d router(s) hit the inferred-edge cap (%d); graph shows a sample of netDb edges",
+			capped, maxInferredPerRouter))
 	}
 
 	// --- assemble ---

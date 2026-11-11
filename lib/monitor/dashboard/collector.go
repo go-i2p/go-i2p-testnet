@@ -11,6 +11,7 @@ import (
 	"context"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,9 +111,19 @@ func (c *Collector) warnOnce(router, msg string, args ...interface{}) {
 	log.WithField("router", router).Warnf(msg, args...)
 }
 
+// collectionConcurrency bounds how many routers are read in parallel during
+// one topology refresh. Each router costs two to three Docker execs, so
+// unbounded parallelism would hammer the Docker daemon; this keeps it modest
+// while still finishing well within the 8 s budget for large rosters.
+const collectionConcurrency = 8
+
 // Inputs collects the topology inputs for the current targets and returns a
 // built graph. Routers without a container id (tests, or discovery that
 // cannot see Docker) contribute nodes but no edges, and a warning says so.
+//
+// Reads run in parallel across routers so one slow container cannot stall
+// the whole refresh. Results are merged deterministically (sorted by router
+// name) so identical inputs always produce an identical graph.
 func (c *Collector) Inputs(ctx context.Context, statuses []*web.RouterStatus) topology.BuildInput {
 	in := topology.BuildInput{
 		GeneratedAt: time.Now(),
@@ -123,40 +134,80 @@ func (c *Collector) Inputs(ctx context.Context, statuses []*web.RouterStatus) to
 		return in
 	}
 
-	// The roster must be fully indexed before sessions are matched, so a
-	// peer's hash prefix can be resolved against this router's neighbours.
-	nodes := make([]topology.Node, 0, len(statuses))
-	for _, st := range statuses {
+	// Sort statuses by name so parallel results merge deterministically.
+	sorted := make([]*web.RouterStatus, len(statuses))
+	copy(sorted, statuses)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+
+	type result struct {
+		name     string
+		hash     string
+		running  bool
+		hashes   []string
+		count    int
+		sessions []topology.Session
+		skipped  bool
+	}
+
+	results := make([]result, len(sorted))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, collectionConcurrency)
+
+	for i, st := range sorted {
+		wg.Add(1)
+		go func(i int, st *web.RouterStatus) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			r := result{name: st.Name}
+			r.hash = c.identHash(ctx, st)
+			r.running = c.running(ctx, st.ContainerID)
+
+			if st.ContainerID == "" {
+				r.skipped = true
+			} else {
+				h, count := c.netDBHashes(ctx, st)
+				r.hashes = h
+				r.count = count
+				if st.Impl == ImplI2PD {
+					r.sessions = c.sessions(ctx, st)
+				}
+			}
+			mu.Lock()
+			results[i] = r
+			mu.Unlock()
+		}(i, st)
+	}
+	wg.Wait()
+
+	// Merge results in deterministic order.
+	nodes := make([]topology.Node, 0, len(sorted))
+	var skipped []string
+	for _, r := range results {
 		nodes = append(nodes, topology.Node{
-			Name:    st.Name,
-			Impl:    st.Impl,
-			IP:      st.IP,
-			Hash:    c.identHash(ctx, st),
-			Running: c.running(ctx, st.ContainerID),
-			State:   st.State,
+			Name:    r.name,
+			Impl:    implForName(sorted, r.name),
+			IP:      ipForName(sorted, r.name),
+			Hash:    r.hash,
+			Running: r.running,
+			State:   stateForName(sorted, r.name),
 		})
+		if r.skipped {
+			skipped = append(skipped, r.name)
+			continue
+		}
+		in.NetDBCounts[r.name] = r.count
+		if len(r.hashes) > 0 {
+			in.Knowledge = append(in.Knowledge, topology.Knowledge{Router: r.name, Hashes: r.hashes})
+		}
+		for _, s := range r.sessions {
+			in.Sessions = append(in.Sessions, s)
+		}
 	}
 	in.Nodes = nodes
 
-	var skipped []string
-	for _, st := range statuses {
-		if st.ContainerID == "" {
-			skipped = append(skipped, st.Name)
-			continue
-		}
-		// netDb membership: peer hashes this router stores.
-		hashes, count := c.netDBHashes(ctx, st)
-		in.NetDBCounts[st.Name] = count
-		if len(hashes) > 0 {
-			in.Knowledge = append(in.Knowledge, topology.Knowledge{Router: st.Name, Hashes: hashes})
-		}
-		// Live transport sessions: the observed edges.
-		if st.Impl == ImplI2PD {
-			for _, s := range c.sessions(ctx, st) {
-				in.Sessions = append(in.Sessions, s)
-			}
-		}
-	}
 	// Routers with no container id cannot be read for sessions or netDb
 	// contents; the graph will show them as isolated, and Build reports the
 	// reason so an operator knows the edges are unknown, not absent.
@@ -165,6 +216,33 @@ func (c *Collector) Inputs(ctx context.Context, statuses []*web.RouterStatus) to
 			Debug("topology: routers without a container id were skipped")
 	}
 	return in
+}
+
+func implForName(statuses []*web.RouterStatus, name string) string {
+	for _, st := range statuses {
+		if st.Name == name {
+			return st.Impl
+		}
+	}
+	return ""
+}
+
+func ipForName(statuses []*web.RouterStatus, name string) string {
+	for _, st := range statuses {
+		if st.Name == name {
+			return st.IP
+		}
+	}
+	return ""
+}
+
+func stateForName(statuses []*web.RouterStatus, name string) string {
+	for _, st := range statuses {
+		if st.Name == name {
+			return st.State
+		}
+	}
+	return ""
 }
 
 // Build collects and builds in one step, attaching collection warnings so an
@@ -444,4 +522,77 @@ func (c *Collector) running(ctx context.Context, containerID string) bool {
 		return false
 	}
 	return inspect.State.Running
+}
+
+// WebconsoleTunnels reads i2pd's tunnels page from inside the container and
+// returns the inbound and outbound tunnel counts. i2pd does not serve these
+// over I2PControl, so the webconsole is the only source.
+func (c *Collector) WebconsoleTunnels(ctx context.Context, st *web.RouterStatus) (inbound, outbound *int64) {
+	if st.ContainerID == "" || c.cli == nil || st.Impl != ImplI2PD {
+		return nil, nil
+	}
+	cmd := []string{"sh", "-c",
+		`wget -qO- "http://127.0.0.1:` + strconv.Itoa(webconsolePort) + `/?page=tunnels" 2>/dev/null | sed 's/<[^>]*>/ /g' | grep -v "^\s*$"`}
+	out, err := docker_control.ExecInContainer(c.cli, ctx, st.ContainerID, cmd)
+	if err != nil {
+		c.warnOnce(st.Name, "tunnels page unavailable: %v", err)
+		return nil, nil
+	}
+	return parseTunnelCounts(out)
+}
+
+// parseTunnelCounts extracts inbound and outbound tunnel counts from a
+// tag-stripped i2pd tunnels page. The page lists tunnels under "Inbound
+// tunnels:" and "Outbound tunnels:" headings, one per line.
+func parseTunnelCounts(page string) (inbound, outbound *int64) {
+	section := ""
+	for _, line := range strings.Split(page, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "Inbound tunnels:"):
+			section = "inbound"
+			continue
+		case strings.HasPrefix(line, "Outbound tunnels:"):
+			section = "outbound"
+			continue
+		case strings.HasPrefix(line, "Queue size:") || strings.HasPrefix(line, "TBM Queue size:"):
+			continue
+		}
+		// A tunnel line looks like: "<hash>:me  established , 0.00 KiB"
+		// or: "<hash>:me &#8658;  established , 2.83 KiB"
+		if strings.Contains(line, "established") || strings.Contains(line, "building") || strings.Contains(line, "expiring") || strings.Contains(line, "failed") {
+			switch section {
+			case "inbound":
+				n := (inbound != nil) && *inbound != 0
+				if !n {
+					inbound = new(int64)
+				}
+				*inbound++
+			case "outbound":
+				n := (outbound != nil) && *outbound != 0
+				if !n {
+					outbound = new(int64)
+				}
+				*outbound++
+			}
+		}
+	}
+	return inbound, outbound
+}
+
+// webconsolePeers reads i2pd's netDb via I2PControl-knownpeers/activepeers
+// are not served, so we count peer RouterInfos from the netDb directory as
+// a proxy for known peers. Fast/high-capacity peers are not exposed by
+// i2pd 2.56 at all.
+func (c *Collector) webconsolePeers(ctx context.Context, st *web.RouterStatus) (knownPeers *int64) {
+	if st.ContainerID == "" || c.cli == nil || st.Impl != ImplI2PD {
+		return nil
+	}
+	// known_peers comes from I2PControl (netdb.knownpeers) when served;
+	// for i2pd it is served, so we don't need webconsole for it.
+	// fast_peers and high_capacity_peers are not served by i2pd at all.
+	return nil
 }

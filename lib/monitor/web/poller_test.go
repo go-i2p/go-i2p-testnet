@@ -221,8 +221,14 @@ func TestPollerPicksUpNewAndRemovedRouters(t *testing.T) {
 	targets = targets[1:] // drop a
 	mu.Unlock()
 	p.DispatchNow(context.Background())
-	if _, ok := p.Get("a"); ok {
-		t.Error("removed router a still present")
+	// Removed routers are kept in the roster with state down so the operator
+	// does not lose sight of them.
+	st, ok := p.Get("a")
+	if !ok {
+		t.Fatal("removed router a missing from roster")
+	}
+	if st.State != StateDown {
+		t.Errorf("removed router a state = %s, want down", st.State)
 	}
 	if _, ok := p.Get("b"); !ok {
 		t.Error("added router b missing")

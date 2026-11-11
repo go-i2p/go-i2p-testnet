@@ -27,6 +27,11 @@
 </div>
 
 <h2>Routers</h2>
+{{if .FilterLabel}}
+<p class="note">Showing {{.FilterLabel}} ({{len .Routers}} of {{.Total}} routers). <a href="/">clear filter</a></p>
+{{else}}
+<p class="note">Filter: <a href="/?filter=state&value=down">down</a> · <a href="/?filter=state&value=stale">stale</a> · <a href="/?filter=state&value=up">up</a> · <a href="/?filter=impl&value=i2pd">i2pd</a> · <a href="/?filter=impl&value=goi2p">goi2p</a></p>
+{{end}}
 <table>
   <thead><tr>
     {{range .Columns}}<th>{{if .Key}}<a href="/?sort={{.Key}}&amp;dir={{.Next}}">{{.Label}}</a>{{.Mark}}{{else}}{{.Label}}{{end}}</th>{{end}}

@@ -92,6 +92,29 @@ func statusClass(state string) string {
 	}
 }
 
+// formatRouterStatus renders the i2p.router.status property per
+// implementation. i2pd sends a destination-readiness flag ("0" = not ready,
+// "1" = ready); go-i2p sends free text (e.g. "RUNNING"). It is not a
+// net-status code, so it must not be reinterpreted through NetStatusName.
+func formatRouterStatus(impl, status string) string {
+	if status == "" {
+		return "—"
+	}
+	switch impl {
+	case "i2pd":
+		switch status {
+		case "0":
+			return "not ready"
+		case "1":
+			return "ready"
+		default:
+			return status
+		}
+	default:
+		return status
+	}
+}
+
 func numI64(v *int64) string {
 	if v == nil {
 		return "—"

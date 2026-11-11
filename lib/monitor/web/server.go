@@ -157,6 +157,8 @@ type topologyView struct {
 	Edges        []topologySVGEdge
 	HasEdges     bool
 	RefreshSecs  int
+	Width        float64 // SVG canvas width, scaled with node count
+	Height       float64 // SVG canvas height, scaled with node count
 }
 
 type topologyRow struct {
@@ -266,7 +268,10 @@ func (s *Server) topologyView(g *topology.Graph) topologyView {
 		return names[i] < names[j]
 	})
 	pos := map[string][2]float64{}
-	v.Rings = layoutRing(names)
+	rings, width, height, _ := layoutRing(names)
+	v.Rings = rings
+	v.Width = width
+	v.Height = height
 	decorateRings(&v, g)
 	for i, name := range names {
 		if i < len(v.Rings) {
@@ -412,7 +417,7 @@ func (s *Server) rowFrom(st *RouterStatus, compact bool) *RouterRow {
 		row.BWIn15s = orStr(valueCellF(st.Impl, "bw_inbound_15s", s.BWInbound15s, compact))
 		row.BWOut1s = orStr(valueCellF(st.Impl, "bw_outbound_1s", s.BWOutbound1s, compact))
 		row.BWOut15s = orStr(valueCellF(st.Impl, "bw_outbound_15s", s.BWOutbound15s, compact))
-		setIf(&row.Status, s.Status)
+		setIf(&row.Status, formatRouterStatus(st.Impl, s.Status))
 	}
 	if st.LastSeen.IsZero() {
 		row.LastSeen = "never"
@@ -496,6 +501,9 @@ type indexView struct {
 	Charts                          []Chart
 	ChartWindow                     string
 	HasTopology                     bool
+	FilterKey                       string // "state" or "impl", empty means no filter
+	FilterValue                     string // the value to match
+	FilterLabel                     string // human-readable label for the active filter
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -513,6 +521,28 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	net := st.NetworkTotals()
 	sortKey, sortDir := sortArgs(r)
 	sortRows(rows, sortKey, sortDir)
+
+	// Optional row filter: ?filter=state&value=down or ?filter=impl&value=i2pd.
+	filterKey := strings.ToLower(r.URL.Query().Get("filter"))
+	filterValue := strings.ToLower(r.URL.Query().Get("value"))
+	var filterLabel string
+	if filterKey != "" && filterValue != "" {
+		var kept []*RouterRow
+		for _, row := range rows {
+			var match string
+			switch filterKey {
+			case "state":
+				match = row.State
+			case "impl":
+				match = row.Impl
+			}
+			if strings.EqualFold(match, filterValue) {
+				kept = append(kept, row)
+			}
+		}
+		rows = kept
+		filterLabel = filterKey + "=" + filterValue
+	}
 
 	view := indexView{
 		Title:       "status",
@@ -535,6 +565,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Charts:      networkCharts(st.NetworkHistory()),
 		ChartWindow: window(s.cfg.PollInterval, HistorySamples),
 		HasTopology: s.cfg.Topology != nil,
+		FilterKey:   filterKey,
+		FilterValue: filterValue,
+		FilterLabel: filterLabel,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.pages.ExecuteTemplate(w, "index.html", view)
