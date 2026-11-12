@@ -427,15 +427,24 @@ func (p *Poller) syncTargets(ctx context.Context) {
 	// of them. Their clients are closed since they can no longer be polled.
 	// Mark them down only once so the failure count does not inflate every
 	// cycle while they remain absent.
+	//
+	// checkedKF must be cleared along with the client: the fingerprint means
+	// "a client matching this config exists", and a router that comes back
+	// with an unchanged key (docker start keeps the name, IP, password and
+	// pinned cert identical) would otherwise match the guard below and never
+	// get a new client, leaving it down forever even though it is healthy.
 	for name := range p.clients {
 		if _, ok := want[name]; !ok {
 			p.clients[name].Close()
 			delete(p.clients, name)
-			if st, ok := p.statuses[name]; ok && st.State != StateDown {
-				st.State = StateDown
-				st.LastError = "router removed from discovery (stopped or deleted)"
-				st.FailureReason = ReasonUnreachable
-				st.Failures++
+			if st, ok := p.statuses[name]; ok {
+				st.checkedKF = ""
+				if st.State != StateDown {
+					st.State = StateDown
+					st.LastError = "router removed from discovery (stopped or deleted)"
+					st.FailureReason = ReasonUnreachable
+					st.Failures++
+				}
 			}
 		}
 	}

@@ -260,23 +260,44 @@ func (c *Collector) Build(ctx context.Context, statuses []*web.RouterStatus) *to
 			unreadable = append(unreadable, st.Name)
 		}
 	}
+	g.Warnings = append(g.Warnings, collectionWarnings(g, unreadable)...)
+	return g
+}
+
+// collectionWarnings explains every roster router whose edges the graph
+// cannot fully account for, so "no edges" is never mistaken for "no
+// connections". It is separate from Build so the reasoning can be tested
+// without a Docker daemon.
+func collectionWarnings(g *topology.Graph, unreadable []string) []string {
+	var out []string
 	if len(unreadable) > 0 {
-		g.Warnings = append(g.Warnings, "no container id for "+strings.Join(unreadable, ", ")+"; their edges are unknown, not absent")
+		out = append(out, "no container id for "+strings.Join(unreadable, ", ")+"; their edges are unknown, not absent")
 	}
 	// A router that is not running cannot report sessions; say so instead of
 	// letting its edges silently disappear from the graph. Routers already
 	// reported above as having no container id are skipped, so the operator
 	// gets one accurate reason rather than two contradictory ones.
 	for _, n := range g.Nodes {
-		if !n.InRoster || n.Running {
+		if !n.InRoster {
 			continue
 		}
 		if contains(unreadable, n.Name) {
 			continue
 		}
-		g.Warnings = append(g.Warnings, n.Name+" is not running, so its sessions are not in this graph")
+		if !n.Running {
+			out = append(out, n.Name+" is not running, so its sessions are not in this graph")
+			continue
+		}
+		// The container is up but the poller cannot observe it, so the graph
+		// shows a down node next to running=yes. Without a word from this
+		// page the two look contradictory; they are two different channels
+		// agreeing that the router is running but not answering.
+		if n.State == web.StateDown {
+			out = append(out,
+				n.Name+" is running but its control endpoint is not answering, so its sessions may be incomplete")
+		}
 	}
-	return g
+	return out
 }
 
 // identHash derives a router's own base64 ident hash from its router.info,

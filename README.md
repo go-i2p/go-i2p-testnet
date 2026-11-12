@@ -165,8 +165,10 @@ router is wedged".
 actually collected; nothing is plotted that no router reported. A value an
 implementation never exposes is labelled `not served by i2pd` rather than
 shown as a dash or a zero — i2pd 2.56 does not serve tunnel in/out or
-fast/high-capacity peer counts over I2PControl, and it renders those
-aggregates on its own webconsole only via client-side JavaScript. History
+fast/high-capacity peer counts over I2PControl. Tunnel in/out are recovered
+from i2pd's own webconsole pages, which are read inside the container over the
+Docker API; fast/high-capacity peer counts have no source in this build at all,
+so they stay labelled `not served by i2pd`. History
 covers 60 samples (5 minutes at the default interval) and is in memory, so
 restarting the CLI clears it.
 

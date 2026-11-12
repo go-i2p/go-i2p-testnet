@@ -92,11 +92,10 @@ datadir on first start.
   | `i2p.router.net.status` | number `2` (FIREWALLED on a single-router net — expected) |
   | `i2p.router.uptime` | number, ms |
   | `i2p.router.version` | string `"2.56.0"` |
-  | `i2p.router.net.tunnels.inbound` / `.outbound` | number |
   | `i2p.router.net.tunnels.participating` | number |
   | `i2p.router.net.bw.inbound.1s` / `.15s`, `outbound.1s` / `.15s` | number, bytes/s |
   | `i2p.router.netdb.knownpeers` / `.activepeers` | number |
-  | `i2p.router.net.tunnels.pools`, `i2p.router.net.connections`, `i2p.router.netdb.isreseeding`, `i2p.router.hash` | **absent from response** (i2pd 2.56 does not serve them via I2PControl) |
+  | `i2p.router.net.tunnels.inbound` / `.outbound`, `i2p.router.netdb.fastpeers` / `.highcapacitypeers`, `i2p.router.net.tunnels.pools`, `i2p.router.net.connections`, `i2p.router.netdb.isreseeding`, `i2p.router.hash` | **absent from response** (i2pd 2.56 does not serve them via I2PControl; it answers a request for them by silently omitting the key, and logs `RouterInfo: unknown request <name>` for each) |
 
 - **i2pd quirk:** `RouterInfo` answers even with a bad/missing `Token` (no
   auth enforcement on that method) — the dashboard still authenticates
@@ -214,10 +213,21 @@ Alpine 3.22 i2pd 2.56 package (i2pd exits with
 `unrecognised option 'http.api_enabled'`, and its only `http.*` keys are
 address/auth/enabled/hostname/lang/pass/port/strictheaders/user/webroot), and
 POSTing a JSON-RPC envelope to `/jsonrpc` — with and without an
-`Authorization: Basic` header — returns the HTML console page, not JSON. The
-tunnel and peer aggregates the console displays are fetched by its own
-client-side JavaScript from a JSON API this build does not expose, so there is
-no stdlib-only way to obtain them here.
+`Authorization: Basic` header — returns the HTML console page, not JSON.
+
+The HTML pages, however, **are** server-rendered and do carry the data, which
+is what the collector scrapes. `?page=tunnels` lists each tunnel as a row under
+the `Inbound tunnels:` / `Outbound tunnels:` headings, and `?page=transports`
+lists each live session as `<hash-prefix>: <ip>:<port> &#8658; [sent:recv]`
+under a per-transport heading — both verified by fetching the pages with
+`wget` from inside the container, with no JavaScript involved. Stripping tags
+with `sed 's/<[^>]*>/ /g'` leaves parseable lines. Two caveats: the pages are
+legitimately **empty** before tunnels/sessions exist (an early probe returned
+only the `Transports:` heading), so an empty result is a bootstrap-timing
+effect and not evidence of client-side rendering; and the arrow arrives as the
+HTML entity `&#8658;` because only tags are stripped. Fast and high-capacity
+peer counts appear on neither the HTML pages nor I2PControl, so they have no
+source at all in this build.
 
 ## Why i2pd tunnel and fast/high-capacity counts cannot be filled in
 

@@ -235,6 +235,65 @@ func TestPollerPicksUpNewAndRemovedRouters(t *testing.T) {
 	}
 }
 
+// TestPollerRepolledAfterReappearingUnchanged covers the docker stop/start
+// cycle: a router leaves the target list and comes back with a byte-identical
+// key (same name, URL, password and pinned cert, which is exactly what
+// restarting the same container produces). The client was closed while it was
+// away, so the poller must rebuild it — otherwise the router stays down
+// forever and the operator is told it is unreachable when it is healthy.
+func TestPollerRepolledAfterReappearingUnchanged(t *testing.T) {
+	r := newMockRouter(t)
+	var mu sync.Mutex
+	present := true
+	target := Target{Name: "a", URL: r.srv.URL, Password: "p"}
+	src := func(context.Context) []Target {
+		mu.Lock()
+		defer mu.Unlock()
+		if !present {
+			return nil
+		}
+		return []Target{target}
+	}
+	p := NewPoller(20*time.Millisecond, time.Second, src)
+	ctx := context.Background()
+
+	p.DispatchNow(ctx)
+	waitFor(t, 3*time.Second, func() bool { st, ok := p.Get("a"); return ok && st.State == StateUp })
+
+	// docker stop: gone from discovery, kept in the roster marked down.
+	mu.Lock()
+	present = false
+	mu.Unlock()
+	p.DispatchNow(ctx)
+	waitFor(t, 3*time.Second, func() bool { st, ok := p.Get("a"); return ok && st.State == StateDown })
+
+	// docker start: back with the same key.
+	mu.Lock()
+	present = true
+	mu.Unlock()
+	hitsBefore := atomic.LoadInt32(&r.pollHits)
+	for i := 0; i < 25; i++ {
+		p.DispatchNow(ctx)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	st, ok := p.Get("a")
+	if !ok {
+		t.Fatal("reappeared router a missing from roster")
+	}
+	if st.State != StateUp {
+		t.Fatalf("reappeared router never polled again: state=%s failures=%d err=%q",
+			st.State, st.Failures, st.LastError)
+	}
+	if got := atomic.LoadInt32(&r.pollHits); got <= hitsBefore {
+		t.Errorf("router was not polled after reappearing: pollHits stayed at %d", got)
+	}
+	if st.FailureReason != ReasonNone || st.Failures != 0 {
+		t.Errorf("failure state not cleared after recovery: reason=%q failures=%d",
+			st.FailureReason, st.Failures)
+	}
+}
+
 func TestPollerBadPinnedCertMarksDown(t *testing.T) {
 	p := NewPoller(20*time.Millisecond, time.Second, func(context.Context) []Target {
 		return []Target{{Name: "x", URL: "https://127.0.0.1:1/", Password: "p", PinnedCertPEM: []byte("not a cert")}}

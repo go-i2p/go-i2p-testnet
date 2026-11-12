@@ -182,6 +182,28 @@ Red within one poll interval (≤ ~10 s, the requirement is two intervals);
 recovery on the next successful poll. The other routers stayed `up` the
 whole time (one down router does not affect the rest).
 
+**Regression found and fixed (audit B-1).** The recovery half of that test was
+later broken by the change that keeps stopped containers in the roster: the
+poller closed a vanished router's client but left its config fingerprint set,
+so a router returning with an unchanged key — which is exactly what
+`docker start` produces — matched the "client already correct" guard and was
+never polled again. It sat at `down` / `unreachable` / "router removed from
+discovery (stopped or deleted)" indefinitely, with the failure count frozen at
+1, while the router itself was healthy and serving I2PControl.
+
+The failure was specific to **standalone (`-dashboard`) mode**, where the roster
+comes from Docker discovery and a stopped container really does leave it; in
+`start` mode the roster is the CLI's in-memory list, so the router stayed
+present and correctly went `stale` -> `up`. `sync_netdb` restarts every i2pd
+router, so it triggered the same strand in standalone mode.
+
+`syncTargets` now clears the fingerprint when it closes a vanished router's
+client, which forces a fresh client on return. `TestPollerRepolledAfterReappearingUnchanged`
+covers the cycle (remove from the target list, re-add byte-identically, assert
+the router is polled again and reaches `up`); it fails with the audited symptom
+when the fix is reverted. Re-verified live in standalone mode: `docker stop` ->
+`down`, `docker start` -> `up` on the next cycle.
+
 ## 6. Security verification (live)
 
 - **Loopback bind**: dashboard listens on `127.0.0.1:8765` by default
@@ -229,9 +251,11 @@ all returned 200 against the running server.
 
 **Charts are drawn from real samples.** `/api/status` history for one router
 held 23 samples with 23 distinct `collected_at` values at 5 s spacing and a
-monotonically increasing `uptime_ms` (14000 -> 256000). The index page rendered
-5 chart boxes containing 5 `<polyline>` elements; the router detail page
-rendered 5 polylines from its own history. Axis labels are integral for integer
+monotonically increasing `uptime_ms` (14000 -> 256000). The index page renders
+3 chart boxes — Peers, Tunnels, Bandwidth — carrying 7 `<polyline>` series in
+total (known + active peers, inbound + outbound + participating tunnels,
+bandwidth in + out); the router detail page renders the same 3 boxes / 7 series
+from its own history. Axis labels are integral for integer
 metrics (`0/5/10/50/100/150`, `9.8 KiB/s/19.5 KiB/s/29.3 KiB/s`) rather than
 the fractional values a naive scale produces.
 
@@ -270,6 +294,17 @@ SVG. `warnings` was empty when all routers were reachable.
   router correctly **demoted to inferred** (its peers still store its
   RouterInfo, but no session can exist), and the warning
   `router-i2pd-1 is not running, so its sessions are not in this graph`.
+
+The `running=False` half of that only holds while the container stays stopped.
+A router that is **running but unobservable** (the B-1 state above, or a router
+whose control endpoint has died while the container lives) legitimately shows
+`running=True` — Docker liveness is the right authority for "is the container
+up" — and the graph previously offered no explanation, so the topology page and
+the router table looked contradictory. `Build` now adds
+`<router> is running but its control endpoint is not answering, so its sessions
+may be incomplete` for exactly that combination, and `collectionWarnings` is
+separated from `Build` so both warning paths are unit-tested without a Docker
+daemon (`TestCollectionWarnings`).
 
 `docker start` restored `up`, cleared `failure_reason` and the consecutive
 failure count, and returned the graph to 6 observed / 3 inferred edges.

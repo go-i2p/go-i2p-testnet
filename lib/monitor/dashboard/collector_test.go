@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"go-i2p-testnet/lib/monitor/topology"
+	"go-i2p-testnet/lib/monitor/web"
+
 	"github.com/go-i2p/common/base64"
 )
 
@@ -166,5 +169,49 @@ func TestParseIdentHashFixture(t *testing.T) {
 func TestParseIdentHashOfGarbageIsNotMistakenForAKnownHash(t *testing.T) {
 	if got := ParseIdentHash([]byte(base64.EncodeToString([]byte("junkjunkjunk")))); got != "" {
 		t.Errorf("junk base64 parsed to %q", got)
+	}
+}
+
+// TestCollectionWarnings checks that every roster router whose edges the graph
+// cannot account for gets exactly one accurate explanation. This is the path
+// that used to stay silent when a router was running but unobservable, which
+// left the topology page showing running=yes next to a down state with no word
+// about why.
+func TestCollectionWarnings(t *testing.T) {
+	g := &topology.Graph{Nodes: []topology.Node{
+		{Name: "router-i2pd-1", InRoster: true, Running: true, State: web.StateUp},
+		{Name: "router-i2pd-2", InRoster: true, Running: false, State: web.StateDown},
+		{Name: "router-i2pd-3", InRoster: true, Running: true, State: web.StateDown},
+		{Name: "router-i2pd-4", InRoster: true, Running: true, State: web.StateUp},
+		{Name: "external-peer", InRoster: false, Running: false},
+	}}
+
+	got := strings.Join(collectionWarnings(g, []string{"router-i2pd-4"}), "\n")
+
+	if !strings.Contains(got, "no container id for router-i2pd-4") {
+		t.Errorf("missing no-container-id warning:\n%s", got)
+	}
+	if !strings.Contains(got, "router-i2pd-2 is not running") {
+		t.Errorf("missing not-running warning:\n%s", got)
+	}
+	if !strings.Contains(got, "router-i2pd-3 is running but its control endpoint is not answering") {
+		t.Errorf("missing running-but-unobservable warning:\n%s", got)
+	}
+	// A healthy router, a peer outside the roster, and a router already
+	// explained by the missing-container-id reason must not be warned about.
+	for _, name := range []string{"router-i2pd-1", "external-peer"} {
+		if strings.Contains(got, name+" is") {
+			t.Errorf("unexpected warning for %s:\n%s", name, got)
+		}
+	}
+	if strings.Contains(got, "router-i2pd-4 is") {
+		t.Errorf("router-i2pd-4 should get one reason, not two:\n%s", got)
+	}
+	// All-healthy roster produces no warnings at all.
+	allUp := &topology.Graph{Nodes: []topology.Node{
+		{Name: "a", InRoster: true, Running: true, State: web.StateUp},
+	}}
+	if w := collectionWarnings(allUp, nil); len(w) != 0 {
+		t.Errorf("healthy roster produced warnings: %q", w)
 	}
 }
