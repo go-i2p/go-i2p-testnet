@@ -101,6 +101,12 @@ func GenerateRouterConfig(routerID int, i2pControlPassword string) string {
 bootstrap:
   type: local
   low-peer-threshold: 1
+  # Small testnet: only 4 i2pd RouterInfos are available, so lower the
+  # emergency-reseed floor from the default (40) to 2. Below this RouterInfo
+  # count go-i2p gates startup and never starts I2PControl/transports, so the
+  # node stays "down" on a small testnet. Requires a go-i2p build that honors
+  # this flag (image rebuilt from latest master).
+  emergency-reseed-floor: 2
 netdb:
   # peers run netid 5; strict validation would reject their RouterInfos
   strict-routerinfo-network-validation: false

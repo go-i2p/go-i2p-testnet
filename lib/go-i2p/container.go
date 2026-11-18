@@ -71,6 +71,7 @@ func CreateRouterContainer(cli *client.Client, ctx context.Context, routerID int
 			"while true; do" +
 				" go-i2p --bootstrap.type local" +
 				" --bootstrap.low-peer-threshold 1" +
+				" --bootstrap.emergency-reseed-floor 2" +
 				" --netdb.strict-routerinfo-network-validation=false;" +
 				" echo \"go-i2p exited ($?), retrying in 5s\"; sleep 5;" +
 				" done",
