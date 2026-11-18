@@ -93,7 +93,6 @@ func SyncNetDbToShared(cli *client.Client, ctx context.Context, containerID, vol
 
 	// Copy the tar archive to the helper container's shared volume
 	err = cli.CopyToContainer(ctx, helperContainerID, "/shared/netDb/"+directory, bytes.NewReader(tarBuffer.Bytes()), container.CopyToContainerOptions{})
-
 	if err != nil {
 		return fmt.Errorf("error copying router info to helper container: %v", err)
 	}

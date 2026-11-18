@@ -543,10 +543,14 @@ func TestNetworkTotalsAggregateAcrossRouters(t *testing.T) {
 // TestNetworkTotalsIgnoreStaleData: summing a router that died ten minutes
 // ago would silently inflate the network view.
 func TestNetworkTotalsIgnoreStaleData(t *testing.T) {
-	fresh := &RouterStatus{Name: "fresh", State: StateUp, LastSeen: time.Now(),
-		Sample: &i2pcontrol.Sample{KnownPeers: i64(5), CollectedAt: time.Now()}}
-	ancient := &RouterStatus{Name: "ancient", State: StateDown, LastSeen: time.Now().Add(-time.Hour),
-		Sample: &i2pcontrol.Sample{KnownPeers: i64(99), CollectedAt: time.Now().Add(-time.Hour)}}
+	fresh := &RouterStatus{
+		Name: "fresh", State: StateUp, LastSeen: time.Now(),
+		Sample: &i2pcontrol.Sample{KnownPeers: i64(5), CollectedAt: time.Now()},
+	}
+	ancient := &RouterStatus{
+		Name: "ancient", State: StateDown, LastSeen: time.Now().Add(-time.Hour),
+		Sample: &i2pcontrol.Sample{KnownPeers: i64(99), CollectedAt: time.Now().Add(-time.Hour)},
+	}
 	p := staticPoller(fresh, ancient)
 	p.interval = time.Minute
 

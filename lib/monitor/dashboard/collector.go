@@ -466,8 +466,10 @@ func (c *Collector) sessions(ctx context.Context, st *web.RouterStatus) []topolo
 	if st.ContainerID == "" || c.cli == nil || st.Impl != ImplI2PD {
 		return nil
 	}
-	cmd := []string{"sh", "-c",
-		`wget -qO- "http://127.0.0.1:` + strconv.Itoa(webconsolePort) + `/?page=transports" 2>/dev/null | sed 's/<[^>]*>/ /g'`}
+	cmd := []string{
+		"sh", "-c",
+		`wget -qO- "http://127.0.0.1:` + strconv.Itoa(webconsolePort) + `/?page=transports" 2>/dev/null | sed 's/<[^>]*>/ /g'`,
+	}
 	out, err := docker_control.ExecInContainer(c.cli, ctx, st.ContainerID, cmd)
 	if err != nil {
 		c.warnOnce(st.Name, "transport table unavailable: %v", err)
@@ -552,8 +554,10 @@ func (c *Collector) WebconsoleTunnels(ctx context.Context, st *web.RouterStatus)
 	if st.ContainerID == "" || c.cli == nil || st.Impl != ImplI2PD {
 		return nil, nil
 	}
-	cmd := []string{"sh", "-c",
-		`wget -qO- "http://127.0.0.1:` + strconv.Itoa(webconsolePort) + `/?page=tunnels" 2>/dev/null | sed 's/<[^>]*>/ /g' | grep -v "^\s*$"`}
+	cmd := []string{
+		"sh", "-c",
+		`wget -qO- "http://127.0.0.1:` + strconv.Itoa(webconsolePort) + `/?page=tunnels" 2>/dev/null | sed 's/<[^>]*>/ /g' | grep -v "^\s*$"`,
+	}
 	out, err := docker_control.ExecInContainer(c.cli, ctx, st.ContainerID, cmd)
 	if err != nil {
 		c.warnOnce(st.Name, "tunnels page unavailable: %v", err)

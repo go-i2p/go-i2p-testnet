@@ -53,7 +53,7 @@ func ptrf(v float64) *float64 { return &v }
 // valueCount returns how many plotted points exist in total and how many
 // series carry at least one. A nil entry means the router did not report that
 // value at that time, so it is not a point.
-func (c Chart) valueCount() (points int, seriesWithData int) {
+func (c Chart) valueCount() (points, seriesWithData int) {
 	for _, s := range c.Series {
 		var n int
 		for _, v := range s.Values {

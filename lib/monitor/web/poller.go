@@ -534,7 +534,7 @@ func (p *Poller) Totals() (routers, up, down, stale, pending int) {
 			pending++
 		}
 	}
-	return
+	return routers, up, down, stale, pending
 }
 
 // NetworkTotals sums the current sample of every router that reported each

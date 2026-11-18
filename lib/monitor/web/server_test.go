@@ -115,8 +115,10 @@ func TestEscaping(t *testing.T) {
 
 func TestRouterDetailPage(t *testing.T) {
 	st := sample()
-	up := &RouterStatus{Name: "r1", Impl: "i2pd", State: StateUp, Sample: st, LastSeen: st.CollectedAt,
-		History: []*i2pcontrol.Sample{st, st}}
+	up := &RouterStatus{
+		Name: "r1", Impl: "i2pd", State: StateUp, Sample: st, LastSeen: st.CollectedAt,
+		History: []*i2pcontrol.Sample{st, st},
+	}
 	s := newTestServer(t, staticPoller(up))
 
 	rec := httptest.NewRecorder()
@@ -136,8 +138,10 @@ func TestRouterDetailPage(t *testing.T) {
 }
 
 func TestAPIStatusJSONShape(t *testing.T) {
-	up := &RouterStatus{Name: "r1", Impl: "i2pd", URL: "https://172.28.0.2:7650/", State: StateUp,
-		Sample: sample(), LastSeen: time.Now(), History: []*i2pcontrol.Sample{sample()}}
+	up := &RouterStatus{
+		Name: "r1", Impl: "i2pd", URL: "https://172.28.0.2:7650/", State: StateUp,
+		Sample: sample(), LastSeen: time.Now(), History: []*i2pcontrol.Sample{sample()},
+	}
 	s := newTestServer(t, staticPoller(up))
 
 	rec := httptest.NewRecorder()
@@ -174,8 +178,10 @@ func TestAPIStatusJSONShape(t *testing.T) {
 		}
 	}
 	sm := r0["sample"].(map[string]interface{})
-	for _, key := range []string{"uptime_ms", "version", "status", "net_status", "tunnels_inbound",
-		"known_peers", "active_peers", "bw_inbound_1s", "bw_outbound_15s", "collected_at"} {
+	for _, key := range []string{
+		"uptime_ms", "version", "status", "net_status", "tunnels_inbound",
+		"known_peers", "active_peers", "bw_inbound_1s", "bw_outbound_15s", "collected_at",
+	} {
 		if _, ok := sm[key]; !ok {
 			t.Errorf("missing sample key %q", key)
 		}

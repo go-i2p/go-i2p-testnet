@@ -123,9 +123,11 @@ func TestAPITopologyJSON(t *testing.T) {
 // data; it must not carry credentials.
 func TestTopologyPasswordsNeverSerialized(t *testing.T) {
 	p := NewPoller(time.Hour, time.Second, nil)
-	p.statuses["r"] = &RouterStatus{Name: "r", Impl: "i2pd", State: StateUp,
+	p.statuses["r"] = &RouterStatus{
+		Name: "r", Impl: "i2pd", State: StateUp,
 		URL: "https://172.28.0.2:7650/", ContainerID: "abc", IP: "172.28.0.2",
-		Sample: sample(), LastSeen: time.Now()}
+		Sample: sample(), LastSeen: time.Now(),
+	}
 	s := newServerWithTopo(t, p, graphFixture())
 	for _, path := range []string{"/api/topology", "/api/status"} {
 		rec := httptest.NewRecorder()
@@ -162,8 +164,10 @@ func TestIndexHasChartsAndNetworkTotals(t *testing.T) {
 		{CollectedAt: now.Add(-5 * time.Second), KnownPeers: i64(3), ActivePeers: i64(1), BWInbound1s: f64(2048)},
 		{CollectedAt: now.Add(-10 * time.Second), KnownPeers: i64(2), ActivePeers: i64(1), BWInbound1s: f64(1024)},
 	}
-	up := &RouterStatus{Name: "router-i2pd-1", Impl: "i2pd", State: StateUp,
-		Sample: hist[0], History: hist, LastSeen: now}
+	up := &RouterStatus{
+		Name: "router-i2pd-1", Impl: "i2pd", State: StateUp,
+		Sample: hist[0], History: hist, LastSeen: now,
+	}
 	p := staticPoller(up)
 	p.interval = 5 * time.Second
 	p.recordNetworkHistory(now)
@@ -222,8 +226,10 @@ func TestRouterPageHasChartsAndExplainsMissingValues(t *testing.T) {
 // TestDownRouterRendersNoBrokenCells is the readability finding: a router with
 // no sample produced cells like "//" and " / ".
 func TestDownRouterRendersNoBrokenCells(t *testing.T) {
-	down := &RouterStatus{Name: "dead", Impl: "goi2p", State: StateDown,
-		LastError: "connection refused", FailureReason: ReasonNotServing, Failures: 3}
+	down := &RouterStatus{
+		Name: "dead", Impl: "goi2p", State: StateDown,
+		LastError: "connection refused", FailureReason: ReasonNotServing, Failures: 3,
+	}
 	s := newTestServer(t, staticPoller(down))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -244,8 +250,10 @@ func TestDownRouterRendersNoBrokenCells(t *testing.T) {
 
 // TestStaleRouterRendersAmber keeps the colour contract for the new state.
 func TestStaleRouterRendersAmber(t *testing.T) {
-	stale := &RouterStatus{Name: "amber", Impl: "i2pd", State: StateStale,
-		Sample: sample(), LastSeen: time.Now().Add(-time.Minute), FailureReason: ReasonTimeout}
+	stale := &RouterStatus{
+		Name: "amber", Impl: "i2pd", State: StateStale,
+		Sample: sample(), LastSeen: time.Now().Add(-time.Minute), FailureReason: ReasonTimeout,
+	}
 	s := newTestServer(t, staticPoller(stale))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -261,8 +269,10 @@ func TestStaleRouterRendersAmber(t *testing.T) {
 // TestAPIStatusCarriesNewFields keeps the JSON contract for automation.
 func TestAPIStatusCarriesNewFields(t *testing.T) {
 	now := time.Now()
-	up := &RouterStatus{Name: "r1", Impl: "i2pd", State: StateUp, Sample: sample(), LastSeen: now,
-		FailureReason: ReasonTimeout, Failures: 2}
+	up := &RouterStatus{
+		Name: "r1", Impl: "i2pd", State: StateUp, Sample: sample(), LastSeen: now,
+		FailureReason: ReasonTimeout, Failures: 2,
+	}
 	p := staticPoller(up)
 	p.interval = 5 * time.Second
 	p.recordNetworkHistory(now)
@@ -302,13 +312,15 @@ func TestAPIStatusCarriesNewFields(t *testing.T) {
 func TestChartsEscapedInHTML(t *testing.T) {
 	now := time.Now()
 	bad := `<script>alert(1)</script>`
-	st := &RouterStatus{Name: bad, Impl: bad, State: StateDown,
+	st := &RouterStatus{
+		Name: bad, Impl: bad, State: StateDown,
 		LastError: bad, Sample: &i2pcontrol.Sample{CollectedAt: now, KnownPeers: i64(1)},
 		History: []*i2pcontrol.Sample{
 			{CollectedAt: now, KnownPeers: i64(2)},
 			{CollectedAt: now.Add(-5 * time.Second), KnownPeers: i64(1)},
 		},
-		LastSeen: now}
+		LastSeen: now,
+	}
 	s := newTestServer(t, staticPoller(st))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))

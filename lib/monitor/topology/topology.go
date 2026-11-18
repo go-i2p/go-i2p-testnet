@@ -220,7 +220,8 @@ func Build(in BuildInput) *Graph {
 			}
 			if addr == "" {
 				warnings = append(warnings, fmt.Sprintf(
-					"session from %s has no peer address (prefix %q)", s.From, s.HashPrefix))
+					"session from %s has no peer address (prefix %q)", s.From, s.HashPrefix,
+				))
 				continue
 			}
 			to = addPeer(addr, s.HashPrefix)
@@ -286,7 +287,8 @@ func Build(in BuildInput) *Graph {
 	if capped > 0 {
 		warnings = append(warnings, fmt.Sprintf(
 			"%d router(s) hit the inferred-edge cap (%d); graph shows a sample of netDb edges",
-			capped, maxInferredPerRouter))
+			capped, maxInferredPerRouter,
+		))
 	}
 
 	// --- assemble ---

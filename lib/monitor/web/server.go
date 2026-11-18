@@ -676,9 +676,16 @@ type sortColumn struct {
 // rather than hidden behind an undocumented query parameter.
 func sortColumns(active, dir string) []sortColumn {
 	specs := [][]string{
-		{"name", "Router"}, {"impl", "Impl"}, {"state", "State"}, {"version", "Version"},
-		{"", "Net status"}, {"uptime", "Uptime"}, {"tunnels", "Tunnels in/out/part"},
-		{"peers", "Peers known/active"}, {"bw", "BW in/out (1s)"}, {"seen", "Last seen"},
+		{"name", "Router"},
+		{"impl", "Impl"},
+		{"state", "State"},
+		{"version", "Version"},
+		{"", "Net status"},
+		{"uptime", "Uptime"},
+		{"tunnels", "Tunnels in/out/part"},
+		{"peers", "Peers known/active"},
+		{"bw", "BW in/out (1s)"},
+		{"seen", "Last seen"},
 	}
 	out := make([]sortColumn, 0, len(specs))
 	for _, sp := range specs {

@@ -252,15 +252,20 @@ func TestIsolatedPointBetweenGapsDrawsADot(t *testing.T) {
 func TestChartSVGParsesAsXML(t *testing.T) {
 	cases := map[string]Chart{
 		"full": {Title: "Peers", Labels: []string{"a", "b", "c"}, Series: []Series{
-			{Name: "known", Color: "#58a6ff", Values: []*float64{ptrf(1), ptrf(2), ptrf(3)}}}},
+			{Name: "known", Color: "#58a6ff", Values: []*float64{ptrf(1), ptrf(2), ptrf(3)}},
+		}},
 		"with gaps": {Title: "Tunnels", Labels: []string{"a", "b", "c"}, Series: []Series{
-			{Name: "in", Color: "#58a6ff", Values: []*float64{ptrf(1), nil, ptrf(3)}}}},
+			{Name: "in", Color: "#58a6ff", Values: []*float64{ptrf(1), nil, ptrf(3)}},
+		}},
 		"all zero": {Title: "Zero", Labels: []string{"a", "b"}, Series: []Series{
-			{Name: "z", Color: "#58a6ff", Values: []*float64{ptrf(0), ptrf(0)}}}},
+			{Name: "z", Color: "#58a6ff", Values: []*float64{ptrf(0), ptrf(0)}},
+		}},
 		"negative": {Title: "Neg", Labels: []string{"a", "b"}, Series: []Series{
-			{Name: "n", Color: "#58a6ff", Values: []*float64{ptrf(-4), ptrf(2)}}}},
+			{Name: "n", Color: "#58a6ff", Values: []*float64{ptrf(-4), ptrf(2)}},
+		}},
 		"escaped title": {Title: `<b onmouseover=x>`, Labels: []string{`<i>`, "b"}, Series: []Series{
-			{Name: `<q>`, Color: "#58a6ff", Values: []*float64{ptrf(1), ptrf(2)}}}},
+			{Name: `<q>`, Color: "#58a6ff", Values: []*float64{ptrf(1), ptrf(2)}},
+		}},
 	}
 	for name, c := range cases {
 		svg := string(c.SVG())
@@ -275,7 +280,8 @@ func TestChartSVGParsesAsXML(t *testing.T) {
 	}
 	// A single point is a dot, not a line, and must still be well-formed.
 	one := Chart{Title: "One", Labels: []string{"a"}, Series: []Series{
-		{Name: "x", Color: "#58a6ff", Values: []*float64{ptrf(5)}}}}
+		{Name: "x", Color: "#58a6ff", Values: []*float64{ptrf(5)}},
+	}}
 	if got := string(one.SVG()); !strings.Contains(got, "chart-empty") {
 		t.Errorf("a single sample must explain itself rather than draw a line: %s", got)
 	}
