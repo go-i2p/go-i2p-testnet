@@ -108,6 +108,11 @@ bootstrap:
   # this flag (image rebuilt from latest master).
   emergency-reseed-floor: 2
 netdb:
+  # Advertise and accept network ID 5 to match the i2pd routers (i2pd.conf
+  # netid = 5). go-i2p defaults to netId 2 (production), which i2pd rejects
+  # on NTCP2/SSU2 handshakes ("networkID 2 mismatch. Expected 5"). Requires a
+  # go-i2p build with netdb.net_id support (image rebuilt from latest master).
+  net_id: "5"
   # peers run netid 5; strict validation would reject their RouterInfos
   strict-routerinfo-network-validation: false
 i2pcontrol:

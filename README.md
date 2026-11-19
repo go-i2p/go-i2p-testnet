@@ -125,7 +125,12 @@ exercise):
   UPnP/NAT-PMP available, and no config to set the host explicitly), so peers
   cannot dial it inbound.
 - go-i2p's outbound NTCP2/SSU2 connection attempts toward i2pd are visible in
-  the i2pd logs — watch for handshake rejections there.
+  the i2pd logs. The network-ID mismatch that previously caused i2pd to reject
+  them (`SessionRequest networkID 2 mismatch. Expected 5`) is resolved by
+  setting `netdb.net_id: "5"` (CLI `--netdb.net-id 5`) in the generated go-i2p
+  config, so go-i2p advertises and accepts netid 5 like the i2pd routers. This
+  requires a go-i2p build with `netdb.net_id` support (image rebuilt from
+  latest master).
 
 ## Verbosity
 
