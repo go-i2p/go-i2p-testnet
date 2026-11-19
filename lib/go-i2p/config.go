@@ -94,10 +94,29 @@ func CopyConfigToVolume(cli *client.Client, ctx context.Context, volumeName, con
 // internal-only) and a non-default password, which is also what go-i2p's
 // own bind policy requires for non-loopback binds. The password lives only
 // in this config file on the router volume and is never logged.
-func GenerateRouterConfig(routerID int, i2pControlPassword string) string {
-	log.WithField("routerID", routerID).Debug("Generating go-i2p router config")
+//
+// routerIP is the container's testnet IP (e.g. 172.28.0.6). It is published
+// via router.external_address so go-i2p advertises host=/port= in its
+// RouterInfo instead of a caps-only address. On the internal-only bridge the
+// public-routability gate would otherwise reject the private container IP and
+// produce a caps-only RI (host=::) that peers cannot dial back — the documented
+// inbound gap. external_address is the operator override that bypasses that
+// gate; the port is omitted so each transport advertises its own bound port
+// with this host. Requires a go-i2p build with router.external_address support
+// (image rebuilt from latest master).
+func GenerateRouterConfig(routerID int, routerIP, i2pControlPassword string) string {
+	log.WithFields(map[string]interface{}{
+		"routerID": routerID,
+		"routerIP": routerIP,
+	}).Debug("Generating go-i2p router config")
 	return `# go-i2p testnet node: bootstrap only from the local netDb,
 # never from clearnet reseed servers (the network is internal-only).
+router:
+  # Publish the container's bridge IP as the reachable address so peers on the
+  # same internal bridge can dial back inbound. Without this, go-i2p's
+  # public-routability gate rejects the private IP and publishes a caps-only
+  # RI (host=::). Port omitted: each transport advertises its own bound port.
+  external_address: "` + routerIP + `"
 bootstrap:
   type: local
   low-peer-threshold: 1

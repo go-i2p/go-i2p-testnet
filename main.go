@@ -420,7 +420,7 @@ func addGOI2PRouter(cli *client.Client, ctx context.Context) error {
 		"ip":       nextIP,
 	}).Debug("Generating router configuration")
 
-	configData := goi2pnode.GenerateRouterConfig(routerID, i2pControlPassword)
+	configData := goi2pnode.GenerateRouterConfig(routerID, nextIP, i2pControlPassword)
 
 	// Create the container
 	log.Debug("Creating router container")
